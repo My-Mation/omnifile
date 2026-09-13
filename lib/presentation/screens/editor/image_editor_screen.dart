@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import '../../../core/services/ocr_service.dart';
 import '../../../core/theme/open_file_colors.dart';
+import '../../../core/utils/text_color_detector.dart';
 import '../../../domain/entities/file_entity.dart';
 import '../../../domain/entities/image_text_overlay_model.dart';
 import '../../providers/detection_provider.dart';
@@ -181,74 +183,79 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         );
       }
 
-      // 5. Draw text overlay if present
+      // 5. Draw text overlay and ImageTextBlocks using full-resolution TextPainter
+      final basePng = Uint8List.fromList(img.encodePng(processed));
+      final codec = await ui.instantiateImageCodec(basePng);
+      final frame = await codec.getNextFrame();
+      final uiImage = frame.image;
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawImage(uiImage, Offset.zero, Paint());
+
+      // 5a. Draw watermark text if present
       if (_overlayText.trim().isNotEmpty) {
-        final argb = _overlayColor.toARGB32();
-        final textR = (argb >> 16) & 0xFF;
-        final textG = (argb >> 8) & 0xFF;
-        final textB = argb & 0xFF;
-        img.drawString(
-          processed,
-          _overlayText.trim(),
-          font: img.arial24,
-          x: 20,
-          y: math.max(10, processed.height - 50),
-          color: img.ColorRgb8(textR, textG, textB),
-        );
+        final tp = TextPainter(
+          text: TextSpan(
+            text: _overlayText.trim(),
+            style: TextStyle(
+              color: _overlayColor,
+              fontSize: (processed.height * 0.035).clamp(16.0, 72.0),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: processed.width.toDouble() - 40);
+        tp.paint(canvas, Offset(20, (processed.height - tp.height - 30).clamp(0, processed.height.toDouble())));
       }
 
-      // 5b. Draw all ImageTextBlocks (OCR replacements & manual text blocks)
+      // 5b. Draw all modified or manual ImageTextBlocks
       for (final block in _textBlocks) {
-        if (block.text.trim().isEmpty) continue;
+        if (block.isModified || block.isManual) {
+          if (block.isCoverOriginal || block.backgroundColor != Colors.transparent) {
+            final bgPaint = Paint()..color = block.backgroundColor;
+            canvas.drawRect(block.rect, bgPaint);
+          }
 
-        final x1 = block.rect.left.toInt().clamp(0, processed.width - 1);
-        final y1 = block.rect.top.toInt().clamp(0, processed.height - 1);
-        final x2 = block.rect.right.toInt().clamp(0, processed.width - 1);
-        final y2 = block.rect.bottom.toInt().clamp(0, processed.height - 1);
-
-        if (block.isCoverOriginal) {
-          final bgArgb = block.backgroundColor.toARGB32();
-          final bgR = (bgArgb >> 16) & 0xFF;
-          final bgG = (bgArgb >> 8) & 0xFF;
-          final bgB = bgArgb & 0xFF;
-          img.fillRect(
-            processed,
-            x1: x1,
-            y1: y1,
-            x2: x2,
-            y2: y2,
-            color: img.ColorRgb8(bgR, bgG, bgB),
-          );
+          if (block.text.trim().isNotEmpty) {
+            final tp = TextPainter(
+              text: TextSpan(
+                text: block.text,
+                style: TextStyle(
+                  color: block.textColor,
+                  fontSize: block.fontSize,
+                  fontFamily: block.fontFamily,
+                  fontWeight: block.fontWeight,
+                  fontStyle: block.fontStyle,
+                ),
+              ),
+              textDirection: TextDirection.ltr,
+            )..layout(maxWidth: math.max(20.0, block.rect.width));
+            tp.paint(canvas, Offset(block.rect.left, block.rect.top));
+          }
         }
-
-        final fgArgb = block.textColor.toARGB32();
-        final textR = (fgArgb >> 16) & 0xFF;
-        final textG = (fgArgb >> 8) & 0xFF;
-        final textB = fgArgb & 0xFF;
-        final font = block.fontSize < 18
-            ? img.arial14
-            : (block.fontSize > 36 ? img.arial48 : img.arial24);
-
-        img.drawString(
-          processed,
-          block.text,
-          font: font,
-          x: x1,
-          y: y1,
-          color: img.ColorRgb8(textR, textG, textB),
-        );
       }
 
-      // 6. Encode
+      final picture = recorder.endRecording();
+      final renderedUi = await picture.toImage(processed.width, processed.height);
+      final byteData = await renderedUi.toByteData(format: ui.ImageByteFormat.png);
+      final finalPngBytes = byteData!.buffer.asUint8List();
+
+      // 6. Encode to target format
       final ext = widget.file.extension.toLowerCase();
       Uint8List encodedBytes;
       String targetExt;
 
       if (ext == 'png') {
-        encodedBytes = Uint8List.fromList(img.encodePng(processed));
+        encodedBytes = finalPngBytes;
         targetExt = 'png';
       } else {
-        encodedBytes = Uint8List.fromList(img.encodeJpg(processed, quality: 92));
+        final reDecoded = img.decodePng(finalPngBytes);
+        if (reDecoded != null) {
+          encodedBytes = Uint8List.fromList(img.encodeJpg(reDecoded, quality: 92));
+        } else {
+          encodedBytes = finalPngBytes;
+        }
         targetExt = 'jpg';
       }
 
@@ -324,16 +331,21 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         for (final line in block.lines) {
           final box = line.boundingBox;
           if (box.width <= 0 || box.height <= 0 || line.text.trim().isEmpty) continue;
-          final estimatedFontSize = (box.height * 0.82).clamp(10.0, 120.0);
+          final detectedColor = _decodedImage != null
+              ? TextColorDetector.detectTextColor(_decodedImage!, box)
+              : Colors.black;
+          final estimatedFontSize = (box.height * 0.85).clamp(8.0, 140.0);
+
           newBlocks.add(ImageTextBlock(
             id: 'ocr_${line.hashCode}_${box.left.toInt()}_${box.top.toInt()}',
             rect: box,
             text: line.text,
+            originalText: line.text,
             fontSize: estimatedFontSize,
-            isCoverOriginal: true,
+            isCoverOriginal: false,
             isManual: false,
-            textColor: Colors.black,
-            backgroundColor: Colors.white,
+            textColor: detectedColor,
+            backgroundColor: Colors.transparent,
           ));
         }
       }
@@ -1032,40 +1044,104 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
                                       borderWidth = 1.8;
                                     }
 
-                                    return Positioned(
-                                      left: screenLeft,
-                                      top: screenTop,
-                                      width: screenWidth,
-                                      child: GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: () {
-                                          setState(() => _selectedBlock = block);
-                                          _editTextBlockDialog(block);
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                                          decoration: BoxDecoration(
-                                            color: isActiveSearchMatch
-                                                ? Colors.black
-                                                : (block.isCoverOriginal ? block.backgroundColor : Colors.transparent),
-                                            border: Border.all(
-                                              color: borderColor,
-                                              width: borderWidth,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            block.text,
-                                            style: TextStyle(
-                                              color: isActiveSearchMatch ? Colors.white : block.textColor,
-                                              fontSize: (block.fontSize * scaleY).clamp(8.0, 72.0),
-                                              fontWeight: (isActiveSearchMatch || isSelected) ? FontWeight.bold : FontWeight.w600,
-                                              height: 1.1,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }),
+                                     return Positioned(
+                                       left: screenLeft,
+                                       top: screenTop,
+                                       width: screenWidth,
+                                       child: GestureDetector(
+                                         behavior: HitTestBehavior.opaque,
+                                         onTap: () {
+                                           setState(() => _selectedBlock = block);
+                                         },
+                                         onPanUpdate: isSelected
+                                             ? (details) {
+                                                 setState(() {
+                                                   block.rect = block.rect.shift(Offset(
+                                                     details.delta.dx / scaleX,
+                                                     details.delta.dy / scaleY,
+                                                   ));
+                                                 });
+                                               }
+                                             : null,
+                                         child: Stack(
+                                           clipBehavior: Clip.none,
+                                           children: [
+                                             Container(
+                                               padding: const EdgeInsets.symmetric(horizontal: 2),
+                                               decoration: BoxDecoration(
+                                                 color: isActiveSearchMatch
+                                                     ? Colors.black
+                                                     : (block.isModified || block.isManual)
+                                                         ? block.backgroundColor
+                                                         : Colors.transparent,
+                                                 border: Border.all(
+                                                   color: borderColor,
+                                                   width: borderWidth,
+                                                 ),
+                                               ),
+                                               child: (block.isModified || block.isManual || isSearchMatch)
+                                                   ? Text(
+                                                       block.text,
+                                                       style: TextStyle(
+                                                         color: isActiveSearchMatch ? Colors.white : block.textColor,
+                                                         fontSize: (block.fontSize * scaleY).clamp(8.0, 100.0),
+                                                         fontFamily: block.fontFamily,
+                                                         fontWeight: block.fontWeight,
+                                                         fontStyle: block.fontStyle,
+                                                         height: 1.1,
+                                                       ),
+                                                       softWrap: true,
+                                                       overflow: TextOverflow.visible,
+                                                     )
+                                                   : SizedBox(
+                                                       height: math.max(16.0, block.rect.height * scaleY),
+                                                     ),
+                                             ),
+                                             // Corner Resize Handle (bottom-right)
+                                             if (isSelected)
+                                               Positioned(
+                                                 right: -10,
+                                                 bottom: -10,
+                                                 child: GestureDetector(
+                                                   behavior: HitTestBehavior.opaque,
+                                                   onPanUpdate: (details) {
+                                                     setState(() {
+                                                       final newW = math.max(30.0, block.rect.width + details.delta.dx / scaleX);
+                                                       final newH = math.max(16.0, block.rect.height + details.delta.dy / scaleY);
+                                                       block.rect = Rect.fromLTWH(
+                                                         block.rect.left,
+                                                         block.rect.top,
+                                                         newW,
+                                                         newH,
+                                                       );
+                                                       if (details.delta.dy.abs() > 0.5) {
+                                                         block.fontSize = (newH * 0.85).clamp(8.0, 140.0);
+                                                       }
+                                                     });
+                                                   },
+                                                   child: Container(
+                                                     width: 22,
+                                                     height: 22,
+                                                     decoration: BoxDecoration(
+                                                       color: Colors.white,
+                                                       shape: BoxShape.circle,
+                                                       border: Border.all(color: Colors.black, width: 2),
+                                                       boxShadow: [
+                                                         BoxShadow(
+                                                           color: Colors.black.withValues(alpha: 0.3),
+                                                           blurRadius: 4,
+                                                         ),
+                                                       ],
+                                                     ),
+                                                     child: const Icon(Icons.crop_free, size: 12, color: Colors.black),
+                                                   ),
+                                                 ),
+                                               ),
+                                           ],
+                                         ),
+                                       ),
+                                     );
+                                   }),
 
                                 // Optional Watermark Text
                                 if (_overlayText.isNotEmpty)
@@ -1260,6 +1336,9 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
           ],
         );
       case _ImageEditorTab.text:
+        if (_selectedBlock != null) {
+          return _buildSelectedBlockControlBar(colors);
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -1331,6 +1410,149 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
           ],
         );
     }
+  }
+
+  Widget _buildSelectedBlockControlBar(OpenFileColors colors) {
+    final block = _selectedBlock!;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Row 1: Font size slider + value label + color circle
+        Row(
+          children: [
+            Icon(Icons.format_size, size: 18, color: colors.textPrimary),
+            const SizedBox(width: 8),
+            Text(
+              '${block.fontSize.toInt()} pt',
+              style: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            Expanded(
+              child: Slider(
+                value: block.fontSize.clamp(8.0, 120.0),
+                min: 8.0,
+                max: 120.0,
+                activeColor: colors.accentPrimary,
+                onChanged: (v) {
+                  setState(() {
+                    block.fontSize = v;
+                  });
+                },
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                final palette = [
+                  Colors.black,
+                  Colors.white,
+                  const Color(0xFFE53935), // Red
+                  const Color(0xFF1E88E5), // Blue
+                  const Color(0xFF43A047), // Green
+                  const Color(0xFFFFB300), // Amber
+                  const Color(0xFF757575), // Gray
+                ];
+                final curIdx = palette.indexWhere((c) => c.toARGB32() == block.textColor.toARGB32());
+                final nextIdx = (curIdx + 1) % palette.length;
+                setState(() {
+                  block.textColor = palette[nextIdx];
+                });
+              },
+              child: Container(
+                width: 24,
+                height: 24,
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: block.textColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.divider, width: 2),
+                ),
+              ),
+            ),
+          ],
+        ),
+        // Row 2: Actions: Edit text, Font Family, Bold, Cover Background, Delete, Done
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.surfaceElevated,
+                  foregroundColor: colors.textPrimary,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: const Size(0, 32),
+                ),
+                icon: const Icon(Icons.edit, size: 14),
+                label: const Text('Edit Text', style: TextStyle(fontSize: 12)),
+                onPressed: () => _editTextBlockDialog(block),
+              ),
+              const SizedBox(width: 8),
+              // Font Family toggle
+              ActionChip(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                label: Text(block.fontFamily ?? 'Sans', style: const TextStyle(fontSize: 11)),
+                onPressed: () {
+                  setState(() {
+                    if (block.fontFamily == null || block.fontFamily == 'sans-serif') {
+                      block.fontFamily = 'serif';
+                    } else if (block.fontFamily == 'serif') {
+                      block.fontFamily = 'monospace';
+                    } else {
+                      block.fontFamily = 'sans-serif';
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              // Bold toggle
+              FilterChip(
+                padding: EdgeInsets.zero,
+                label: const Text('B', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                selected: block.fontWeight == FontWeight.bold,
+                onSelected: (val) {
+                  setState(() {
+                    block.fontWeight = val ? FontWeight.bold : FontWeight.normal;
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              // Background Cover Toggle
+              ActionChip(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                avatar: Icon(
+                  block.isCoverOriginal ? Icons.layers : Icons.layers_clear,
+                  size: 14,
+                  color: block.isCoverOriginal ? colors.accentPrimary : colors.textSecondary,
+                ),
+                label: Text(block.isCoverOriginal ? 'Cover ON' : 'Transparent', style: const TextStyle(fontSize: 11)),
+                onPressed: () {
+                  setState(() {
+                    block.isCoverOriginal = !block.isCoverOriginal;
+                    block.backgroundColor = block.isCoverOriginal ? Colors.white : Colors.transparent;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: Icon(Icons.delete_outline, color: colors.stateError, size: 20),
+                tooltip: 'Delete text block',
+                onPressed: () {
+                  setState(() {
+                    _textBlocks.removeWhere((b) => b.id == block.id);
+                    _selectedBlock = null;
+                  });
+                },
+              ),
+              IconButton(
+                icon: Icon(Icons.check_circle_outline, color: colors.accentPrimary, size: 20),
+                tooltip: 'Done',
+                onPressed: () => setState(() => _selectedBlock = null),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   ColorFilter _buildColorFilter() {

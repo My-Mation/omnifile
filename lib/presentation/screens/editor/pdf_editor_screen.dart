@@ -4,9 +4,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image/image.dart' as img;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../../../core/services/ocr_service.dart';
 import '../../../core/theme/open_file_colors.dart';
+import '../../../core/utils/text_color_detector.dart';
 import '../../../domain/entities/file_entity.dart';
 import '../../../domain/entities/image_text_overlay_model.dart';
 import '../../providers/detection_provider.dart';
@@ -160,13 +162,14 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
       final imagePath = renderedPaths.first;
       _renderedImagePath = imagePath;
 
-      // Get image dimensions
+      // Get image dimensions & decode image for color sampling
       final imgBytes = await File(imagePath).readAsBytes();
       final descriptor = await ui.ImageDescriptor.encoded(
         await ui.ImmutableBuffer.fromUint8List(imgBytes),
       );
       _imageWidth = descriptor.width;
       _imageHeight = descriptor.height;
+      final decodedImg = img.decodeImage(imgBytes);
 
       // Extract vector text lines with exact bounding boxes
       final blocks = <ImageTextBlock>[];
@@ -189,7 +192,15 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
               line.bounds.width * scaleX,
               line.bounds.height * scaleY,
             );
-            final fontSize = line.fontSize > 0 ? line.fontSize : (rect.height * 0.8);
+            final fontSize = line.fontSize > 0 ? line.fontSize : (rect.height * 0.85);
+            final detectedColor = decodedImg != null
+                ? TextColorDetector.detectTextColor(decodedImg, rect)
+                : Colors.black;
+            final fontProps = TextColorDetector.detectFontProperties(
+              line.fontName,
+              isBold: line.fontStyle.contains(PdfFontStyle.bold),
+              isItalic: line.fontStyle.contains(PdfFontStyle.italic),
+            );
 
             blocks.add(ImageTextBlock(
               id: 'vec_${line.hashCode}_${line.bounds.left.toInt()}_${line.bounds.top.toInt()}',
@@ -197,10 +208,13 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
               text: line.text,
               originalText: line.text,
               fontSize: fontSize,
-              textColor: Colors.black,
-              backgroundColor: Colors.white,
-              isCoverOriginal: true,
+              textColor: detectedColor,
+              backgroundColor: Colors.transparent,
+              isCoverOriginal: false,
               isManual: false,
+              fontFamily: fontProps.fontFamily,
+              fontWeight: fontProps.fontWeight,
+              fontStyle: fontProps.fontStyle,
             ));
           }
         } catch (_) {}
@@ -216,16 +230,20 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
             for (final line in b.lines) {
               final box = line.boundingBox;
               if (box.width <= 0 || box.height <= 0 || line.text.trim().isEmpty) continue;
-              final estFontSize = (box.height * 0.82).clamp(8.0, 72.0);
+              final estFontSize = (box.height * 0.85).clamp(8.0, 140.0);
+              final detectedColor = decodedImg != null
+                  ? TextColorDetector.detectTextColor(decodedImg, box)
+                  : Colors.black;
+
               ocrBlocks.add(ImageTextBlock(
                 id: 'ocr_${line.hashCode}_${box.left.toInt()}_${box.top.toInt()}',
                 rect: box,
                 text: line.text,
                 originalText: line.text,
                 fontSize: estFontSize,
-                textColor: Colors.black,
-                backgroundColor: Colors.white,
-                isCoverOriginal: true,
+                textColor: detectedColor,
+                backgroundColor: Colors.transparent,
+                isCoverOriginal: false,
                 isManual: false,
               ));
             }
@@ -591,9 +609,30 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
               final fgR = (block.textColor.r * 255.0).round().clamp(0, 255);
               final fgG = (block.textColor.g * 255.0).round().clamp(0, 255);
               final fgB = (block.textColor.b * 255.0).round().clamp(0, 255);
+
+              final isBold = block.fontWeight == FontWeight.bold;
+              final isItalic = block.fontStyle == FontStyle.italic;
+              PdfFontStyle pdfStyle = PdfFontStyle.regular;
+              if (isBold && isItalic) {
+                pdfStyle = PdfFontStyle.bold;
+              } else if (isBold) {
+                pdfStyle = PdfFontStyle.bold;
+              } else if (isItalic) {
+                pdfStyle = PdfFontStyle.italic;
+              }
+
+              PdfFont font;
+              if (block.fontFamily == 'serif') {
+                font = PdfStandardFont(PdfFontFamily.timesRoman, fontPt, style: pdfStyle);
+              } else if (block.fontFamily == 'monospace') {
+                font = PdfStandardFont(PdfFontFamily.courier, fontPt, style: pdfStyle);
+              } else {
+                font = PdfStandardFont(PdfFontFamily.helvetica, fontPt, style: pdfStyle);
+              }
+
               page.graphics.drawString(
                 block.text,
-                PdfStandardFont(PdfFontFamily.helvetica, fontPt),
+                font,
                 brush: PdfSolidBrush(PdfColor(fgR, fgG, fgB)),
                 bounds: pdfRect,
               );
@@ -968,8 +1007,7 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
   Widget _buildBlockOverlay(ImageTextBlock block, int index, double scale, OpenFileColors colors) {
     final left = block.rect.left * scale;
     final top = block.rect.top * scale;
-    final width = math.max(16.0, block.rect.width * scale);
-    final height = math.max(12.0, block.rect.height * scale);
+    final width = math.max(20.0, block.rect.width * scale);
 
     final isSelected = _selectedBlock == block;
     final isSearchMatch = _searchMatchIndices.contains(index);
@@ -990,45 +1028,247 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
       overlayBg = block.backgroundColor;
       overlayBorder = Border.all(color: colors.accentPrimary, width: 1.5);
     } else if (isSelected) {
-      overlayBg = colors.accentPrimary.withValues(alpha: 0.2);
+      overlayBg = colors.accentPrimary.withValues(alpha: 0.15);
       overlayBorder = Border.all(color: colors.accentPrimary, width: 2.0);
     } else {
       // Unedited text line: subtle tap hint border
-      overlayBorder = Border.all(color: Colors.grey.withValues(alpha: 0.3), width: 0.7);
+      overlayBorder = Border.all(color: Colors.grey.withValues(alpha: 0.25), width: 0.7);
     }
 
     return Positioned(
       left: left,
       top: top,
       width: width,
-      height: height,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           setState(() => _selectedBlock = block);
-          _editTextBlockDialog(block);
         },
-        child: Container(
-          decoration: BoxDecoration(
-            color: overlayBg,
-            border: overlayBorder,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: (block.isModified || block.isManual)
-              ? Text(
-                  block.text,
-                  style: TextStyle(
-                    color: block.textColor,
-                    fontSize: (block.fontSize * scale).clamp(8.0, 72.0),
-                    fontWeight: FontWeight.w500,
+        onPanUpdate: isSelected
+            ? (details) {
+                setState(() {
+                  block.rect = block.rect.shift(Offset(
+                    details.delta.dx / scale,
+                    details.delta.dy / scale,
+                  ));
+                });
+              }
+            : null,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              decoration: BoxDecoration(
+                color: overlayBg,
+                border: overlayBorder,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              alignment: Alignment.centerLeft,
+              child: (block.isModified || block.isManual || isSearchMatch)
+                  ? Text(
+                      block.text,
+                      style: TextStyle(
+                        color: isActiveSearchMatch ? Colors.black : block.textColor,
+                        fontSize: (block.fontSize * scale).clamp(8.0, 100.0),
+                        fontFamily: block.fontFamily,
+                        fontWeight: block.fontWeight,
+                        fontStyle: block.fontStyle,
+                        height: 1.1,
+                      ),
+                      softWrap: true,
+                      overflow: TextOverflow.visible,
+                    )
+                  : SizedBox(
+                      height: math.max(14.0, block.rect.height * scale),
+                    ),
+            ),
+            // Corner Resize Handle (bottom-right)
+            if (isSelected)
+              Positioned(
+                right: -10,
+                bottom: -10,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanUpdate: (details) {
+                    setState(() {
+                      final newW = math.max(30.0, block.rect.width + details.delta.dx / scale);
+                      final newH = math.max(14.0, block.rect.height + details.delta.dy / scale);
+                      block.rect = Rect.fromLTWH(
+                        block.rect.left,
+                        block.rect.top,
+                        newW,
+                        newH,
+                      );
+                      if (details.delta.dy.abs() > 0.5) {
+                        block.fontSize = (newH * 0.85).clamp(8.0, 140.0);
+                      }
+                    });
+                  },
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: colors.accentPrimary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.open_in_full, size: 12, color: Colors.white),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                )
-              : null,
+                ),
+              ),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSelectedBlockControlBar(OpenFileColors colors) {
+    final block = _selectedBlock!;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Row 1: Font size slider + value label + color circle
+        Row(
+          children: [
+            Icon(Icons.format_size, size: 18, color: colors.textPrimary),
+            const SizedBox(width: 8),
+            Text(
+              '${block.fontSize.toInt()} pt',
+              style: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            Expanded(
+              child: Slider(
+                value: block.fontSize.clamp(8.0, 120.0),
+                min: 8.0,
+                max: 120.0,
+                activeColor: colors.accentPrimary,
+                onChanged: (v) {
+                  setState(() {
+                    block.fontSize = v;
+                  });
+                },
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                final palette = [
+                  Colors.black,
+                  Colors.white,
+                  const Color(0xFFE53935), // Red
+                  const Color(0xFF1E88E5), // Blue
+                  const Color(0xFF43A047), // Green
+                  const Color(0xFFFFB300), // Amber
+                  const Color(0xFF757575), // Gray
+                ];
+                final curIdx = palette.indexWhere((c) => c.toARGB32() == block.textColor.toARGB32());
+                final nextIdx = (curIdx + 1) % palette.length;
+                setState(() {
+                  block.textColor = palette[nextIdx];
+                });
+              },
+              child: Container(
+                width: 24,
+                height: 24,
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: block.textColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.divider, width: 2),
+                ),
+              ),
+            ),
+          ],
+        ),
+        // Row 2: Actions: Edit text, Font Family, Bold, Cover Background, Delete, Done
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.surfaceElevated,
+                  foregroundColor: colors.textPrimary,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: const Size(0, 32),
+                ),
+                icon: const Icon(Icons.edit, size: 14),
+                label: const Text('Edit Text', style: TextStyle(fontSize: 12)),
+                onPressed: () => _editTextBlockDialog(block),
+              ),
+              const SizedBox(width: 8),
+              // Font Family toggle
+              ActionChip(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                label: Text(block.fontFamily ?? 'Sans', style: const TextStyle(fontSize: 11)),
+                onPressed: () {
+                  setState(() {
+                    if (block.fontFamily == null || block.fontFamily == 'sans-serif') {
+                      block.fontFamily = 'serif';
+                    } else if (block.fontFamily == 'serif') {
+                      block.fontFamily = 'monospace';
+                    } else {
+                      block.fontFamily = 'sans-serif';
+                    }
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              // Bold toggle
+              FilterChip(
+                padding: EdgeInsets.zero,
+                label: const Text('B', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                selected: block.fontWeight == FontWeight.bold,
+                onSelected: (val) {
+                  setState(() {
+                    block.fontWeight = val ? FontWeight.bold : FontWeight.normal;
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              // Background Cover Toggle
+              ActionChip(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                avatar: Icon(
+                  block.isCoverOriginal ? Icons.layers : Icons.layers_clear,
+                  size: 14,
+                  color: block.isCoverOriginal ? colors.accentPrimary : colors.textSecondary,
+                ),
+                label: Text(block.isCoverOriginal ? 'Cover ON' : 'Transparent', style: const TextStyle(fontSize: 11)),
+                onPressed: () {
+                  setState(() {
+                    block.isCoverOriginal = !block.isCoverOriginal;
+                    block.backgroundColor = block.isCoverOriginal ? Colors.white : Colors.transparent;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: Icon(Icons.delete_outline, color: colors.stateError, size: 20),
+                tooltip: 'Delete text block',
+                onPressed: () {
+                  setState(() {
+                    _textBlocks.removeWhere((b) => b.id == block.id);
+                    _selectedBlock = null;
+                  });
+                },
+              ),
+              IconButton(
+                icon: Icon(Icons.check_circle_outline, color: colors.accentPrimary, size: 20),
+                tooltip: 'Done',
+                onPressed: () => setState(() => _selectedBlock = null),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1041,36 +1281,38 @@ class _PdfEditorScreenState extends ConsumerState<PdfEditorScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
-          children: [
-            FilterChip(
-              avatar: Icon(
-                _tapToAddTextMode ? Icons.touch_app : Icons.touch_app_outlined,
-                size: 16,
-                color: _tapToAddTextMode ? colors.accentOnAccent : colors.textPrimary,
-              ),
-              label: Text(_tapToAddTextMode ? 'Tap Spot Mode: Active' : 'Tap Spot to Add Text'),
-              selected: _tapToAddTextMode,
-              selectedColor: colors.accentPrimary,
-              onSelected: (val) {
-                setState(() => _tapToAddTextMode = val);
-                if (val) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Tap anywhere on the PDF page to add a new text block'),
-                      duration: Duration(seconds: 2),
+        child: _selectedBlock != null
+            ? _buildSelectedBlockControlBar(colors)
+            : Row(
+                children: [
+                  FilterChip(
+                    avatar: Icon(
+                      _tapToAddTextMode ? Icons.touch_app : Icons.touch_app_outlined,
+                      size: 16,
+                      color: _tapToAddTextMode ? colors.accentOnAccent : colors.textPrimary,
                     ),
-                  );
-                }
-              },
-            ),
-            const Spacer(),
-            Text(
-              '${_textBlocks.length} text blocks',
-              style: TextStyle(color: colors.textSecondary, fontSize: 12),
-            ),
-          ],
-        ),
+                    label: Text(_tapToAddTextMode ? 'Tap Spot Mode: Active' : 'Tap Spot to Add Text'),
+                    selected: _tapToAddTextMode,
+                    selectedColor: colors.accentPrimary,
+                    onSelected: (val) {
+                      setState(() => _tapToAddTextMode = val);
+                      if (val) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Tap anywhere on the PDF page to add a new text block'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_textBlocks.length} text blocks',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
       ),
     );
   }
