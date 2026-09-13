@@ -1,0 +1,462 @@
+Here's your comprehensive rules.txt file. This is designed to be pasted directly into an AI coding assistant (Cursor, Claude, Copilot, etc.) as the master specification document for building your app.
+
+============================================================================
+PROJECT: OpenFile - Universal Offline File Viewer
+VERSION: 1.0.0
+TYPE: Flutter Mobile Application (Android-first)
+============================================================================
+1. PROJECT OVERVIEW & PHILOSOPHY
+1.1 What This App Is
+OpenFile is a completely OFFLINE, universal file opener and viewer for Android. It allows users to open, view, and interact with ANY file type on their device from a single app — PDFs, documents, code files, archives, images, videos, audio, and more.
+
+1.2 Core Philosophy (NON-NEGOTIABLE RULES)
+100% OFFLINE: The app must NEVER make any network request. No INTERNET permission in AndroidManifest.xml. No analytics. No telemetry. No tracking. No crash reporting that sends data externally.
+100% FREE: No ads. No in-app purchases. No premium tier. No paywall. No feature gating behind payments.
+PRIVACY FIRST: All file processing happens locally on the device. No file is ever uploaded anywhere. No user data is ever collected.
+FAST & LIGHT: App size should stay under 50MB installed. Cold start to usable in under 2 seconds on a mid-range device. Opening any file under 10MB should feel instant.
+RESPECTFUL UX: No dark patterns. No nag screens. No rating prompts that interrupt workflow. One-time permission requests with clear explanations only.
+1.3 What This App Is NOT
+NOT a file editor (viewing only, with minor exceptions noted below)
+NOT a file manager (no browsing/copying/moving files — that's a different app; we only open files handed to us or picked by user)
+NOT a converter (no format conversion in v1)
+NOT a cloud sync tool
+2. TARGET PLATFORM & REQUIREMENTS
+Primary Platform: Android (API 24 / Android 7.0 minimum, target latest stable API)
+Secondary (future): iOS — write code platform-agnostically where possible, but Android is the priority. Do not block on iOS issues.
+Framework: Flutter (latest stable version), written in Dart with null safety enabled
+Minimum Devices: Must run smoothly on devices with 2GB RAM. Test paths for low-memory devices.
+Architectures: arm64-v8a, armeabi-v7a, x86_64
+3. SUPPORTED FILE FORMATS (COMPLETE SPECIFICATION)
+3.1 TIER 1 — Core Formats (Must work perfectly at launch)
+Format	Extension(s)	Viewer Behavior
+PDF	.pdf	Full paged viewer, swipe/scroll, pinch zoom, page indicator, jump-to-page, password-protected support
+Text	.txt, .log, .md, .csv	Monospace-capable viewer, encoding auto-detection (UTF-8, UTF-16, Latin-1, ASCII), search within file, word wrap toggle
+Markdown	.md	Rendered view (parsed markdown) with toggle to raw source
+Images	.jpg, .jpeg, .png, .gif, .webp, .bmp, .heic	Full-screen viewer, pinch zoom, pan, rotate, EXIF data panel
+Video	.mp4, .mkv, .avi, .mov, .webm, .3gp, .ts, .m4v	Full player with all controls (see section 5.4)
+Audio	.mp3, .wav, .flac, .aac, .ogg, .m4a, .opus	Full player with waveform/seekbar (see section 5.4)
+Archives	.zip	Browse contents as file list, tap to preview individual files inside, extract-all option
+HTML	.html, .htm	Rendered via offline WebView with toggle to view source code
+Code	.py, .js, .dart, .java, .kt, .c, .cpp, .h, .cs, .go, .rs, .rb, .php, .sh, .bat, .ps1, .sql, .xml, .json, .yml, .yaml, .toml, .ini, .cfg, .css	Syntax-highlighted viewer with line numbers, search, wrap toggle
+3.2 TIER 2 — Secondary Formats (Must work, may degrade gracefully)
+Format	Extension(s)	Viewer Behavior
+Office (read-only)	.docx, .xlsx, .pptx	Best-effort rendering. If full rendering is not feasible with free/offline libraries, display: text content extraction for docx, sheet data grid for xlsx, slide text content for pptx, with a clear "limited preview" notice
+Legacy Office	.doc, .xls, .ppt	Same approach as Tier 2 above; graceful degradation allowed
+eBooks	.epub	Chapter-based reader with adjustable font size
+JSON pretty	.json	Pretty-printed with collapsible tree view toggle
+SVG	.svg	Rendered vector display with zoom
+TAR/GZip	.tar, .gz, .tgz, .tar.gz	Same as ZIP handling
+RAW text-ish	any unknown extension that begins with readable text	Auto-detect: if file appears to be mostly valid UTF-8 text, open in text viewer
+3.3 TIER 3 — Fallback Behavior (Unknown/binary formats)
+If file type is unrecognized OR cannot be rendered:
+Attempt text detection (first 8KB check). If >90% printable characters, open in text viewer with a banner: "Opened as plain text"
+Otherwise, show Hex View: offset column, hex bytes, ASCII gutter. Virtualized list (lazy-load chunks) so multi-GB files don't crash.
+Always show a file info panel (name, size, MIME guess, modified date) in the unsupported screen with a "Share/Open with another app" button using the Android share intent.
+4. TECHNICAL ARCHITECTURE
+4.1 Architecture Pattern
+Use Clean Architecture with three layers:
+
+lib/
+├── main.dart
+├── app.dart # MaterialApp, theme, router
+├── core/ # Shared utilities, constants, errors
+│ ├── constants/
+│ ├── errors/ # Failure classes
+│ ├── theme/ # Light/dark theme definitions
+│ ├── utils/ # File type detection, formatters, mime
+│ └── extensions/
+├── domain/ # Pure Dart business logic (no Flutter imports)
+│ ├── entities/ # FileEntity, ViewerType enum, etc.
+│ ├── repositories/ # Abstract contracts
+│ └── usecases/ # DetectFileType, GetFileInfo, etc.
+├── data/ # Implementations of domain contracts
+│ ├── models/
+│ └── repositories/
+└── presentation/ # UI layer
+├── screens/
+│ ├── home/ # File picker / recent files screen
+│ ├── viewer/ # Router screen that picks the right viewer
+│ ├── viewers/ # One folder per viewer type:
+│ │ ├── pdf/
+│ │ ├── text_code/
+│ │ ├── image/
+│ │ ├── video/
+│ │ ├── audio/
+│ │ ├── archive/
+│ │ ├── html/
+│ │ ├── markdown/
+│ │ ├── hex/
+│ │ └── office/
+│ └── widgets/ # Shared widgets
+└── providers/ # State management (Riverpod recommended)
+
+
+### 4.2 State Management
+- Use **Riverpod** (riverpod 2.x with code generation if convenient)
+- Every viewer screen has its own StateNotifier/AsyncNotifier
+- No global mutable state except: theme mode, recent files list
+
+### 4.3 Required Packages (pin versions, no abandoned packages)
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # File access & system
+  file_picker:              # picking files via system picker (SAF)
+  path_provider:            # temp dirs for extraction
+  permission_handler:       # storage permissions (scoped storage aware)
+  share_plus:               # share/open-with fallback
+  device_info_plus:         # for optional About screen info
+  open_filex:               # fallback launcher for unknown types
+
+  # PDF
+  flutter_pdfview:          # native PDF rendering (small, fast, offline)
+
+  # Media (video + audio) — libmpv backed, plays everything
+  media_kit: 
+  media_kit_video:
+  media_kit_libs_video:     # bundles native libs per-platform
+
+  # Archives
+  archive:                  # pure Dart zip/tar/gzip
+
+  # Code / text viewing
+  flutter_highlight:        # syntax highlighting themes
+  highlight:                # highlight engine
+  flutter_code_editor: OR code_text_field:  # line numbers + editing-lite
+  auto_size_text:
+
+  # Markdown
+  flutter_markdown:
+
+  # HTML
+  webview_flutter:          # offline local-file WebView rendering
+  webview_flutter_android:
+  webview_flutter_wkwebview:
+
+  # Utils
+  path:
+  mime:                     # mime type detection
+  collection:
+  equatable:
+  intl:                     # date/size formatting
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints:
+  build_runner:             # if using riverpod codegen
+  mocktail:                 # testing
+
+  4.4 File Type Detection Pipeline (implement exactly this order)
+Read filename extension → map to known type (fast path)
+If unknown extension, read first 16 bytes → check magic numbers:
+%PDF → PDF
+PK\x03\x04 → ZIP-based (could be docx/xlsx/pptx too — check
+internal structure via archive package for [Content_Types].xml)
+\x89PNG → PNG; \xFF\xD8\xFF → JPEG; GIF8 → GIF
+\x1F\x8B → GZIP; ustar at offset 257 → TAR
+\x1A\x45\xDF\xA3 → Matroska/WebM video
+ID3 or \xFF\xFB/\xFF\xF3 → MP3 audio
+RIFF → WAV/AVI (check sub-chunk)
+fLaC → FLAC
+OggS → OGG
+<!DOCTYPE html or <html in first 4KB → HTML
+If still unknown → text-detection heuristic → hex fallback (per
+section 3.3)
+Cache detection result per file path+size+mtime in memory (no
+persistent DB needed in v1)
+4.5 Entry Points (how files reach the app)
+The app must support ALL of these:
+
+Pick from app: Home screen "Open File" button → system file
+picker (file_picker with FileType.any)
+"Open with" intent: Registered as a handler for common MIME
+types and file extensions in AndroidManifest (intent-filters for
+android.intent.action.VIEW with as many MIME types +
+*/${extension} patterns as feasible — pdf, text/, image/,
+video/, audio/, application/zip, application/json, and file
+extension patterns for the Tier 1 list)
+Recent files: Home screen lists last 20 opened files (stored
+locally via shared_preferences — path + name + timestamp + type
+only; NEVER file contents)
+Content URI handling: Files may arrive as content:// URIs
+from SAF. Must copy to app cache (if needed by a viewer that
+requires a real path, e.g., flutter_pdfview) or read bytes directly.
+Handle large files with streaming where the viewer supports it.
+5. DETAILED VIEWER SPECIFICATIONS
+5.1 Common Viewer Shell (every viewer inherits this)
+AppBar: file name (truncate middle), overflow menu with:
+"File info" (dialog: name, type, size, path/URI, modified date,
+SHA-256 hash computed lazily for files <100MB)
+"Share" (share_plus)
+"Open with…" (open_filex / Android intent)
+"Toggle theme" (quick light/dark switch for viewer area only)
+Loading state: shimmer or spinner with file size shown
+Error state: friendly icon + error message + "Try text viewer" and
+"Open with another app" buttons
+Double-tap to toggle fullscreen (hide system UI + AppBar, swipe from
+edge to restore)
+5.2 PDF Viewer
+Package: flutter_pdfview
+Features: page swipe (horizontal), continuous scroll option, pinch
+zoom (native), page X/Y indicator, jump-to-page input, password
+prompt loop (max 3 attempts then friendly failure), remember last
+read page per file (keyed by path hash, stored in shared_preferences)
+Large PDFs (>50MB): show size warning once, then proceed
+5.3 Text & Code Viewer
+Combine highlight + flutter_code_editor (or code_text_field)
+Features:
+Syntax highlighting auto-selected from extension map (180+ langs
+supported by highlight package — map at least the Tier 1 code list)
+Line numbers gutter
+Soft-wrap toggle (default: off for code, on for .txt/.log)
+Search bar (find, case toggle, count matches, prev/next, highlight
+all)
+Font size control (pinch or +/- buttons, persisted globally)
+Encoding switcher: auto-detect, then manual: UTF-8, UTF-16LE,
+UTF-16BE, Latin-1, ASCII
+Large files: files >2MB load lazily — read first 1MB, show
+"Load more" button or virtualized chunked reading. Files >50MB in
+text mode: warn and require confirmation
+Markdown files: top-right toggle between Rendered (flutter_markdown)
+and Source (code viewer)
+Read-only (TextField with readOnly: true — allows selection & copy)
+5.4 Media Player (Video & Audio) — package: media_kit
+Video:
+Full controls overlay: play/pause, seekbar with buffered indicator,
+current/total time, 10s skip buttons, playback speed menu
+(0.25x–4x), aspect ratio toggle, loop toggle
+Gestures: horizontal swipe = seek (with position preview), vertical
+left swipe = brightness, vertical right swipe = volume,
+double-tap left/right = -/+10s, double-tap center = play/pause
+Subtitles: if a .srt/.ass file with same basename exists in same
+directory, auto-load it. Manual "Load subtitle" picker too.
+Subtitle styling: size, color, background opacity settings panel
+Audio tracks & video quality (if multiple streams in MKV):
+selectable via menu
+Background audio: when video app is backgrounded, keep audio
+playing (configure media_kit appropriately); show media
+notification
+PiP (picture-in-picture): implement Android native PiP if feasible;
+acceptable to defer to v1.1
+Audio:
+Album art (from metadata via media_kit), title/artist display
+Seekbar, speed control, loop/shuffle for playlists (v1: single file
+is fine; playlists = v1.1)
+Optional: simple waveform visualization (nice-to-have, not required)
+Supported: everything libmpv supports (this covers essentially all
+consumer formats)
+5.5 Image Viewer
+InteractiveViewer (pan/zoom), double-tap zoom toggle, rotate button
+Multi-frame GIF/WebP animation support
+EXIF info panel (if EXIF package needed, add exif package —
+optional): dimensions, camera, date, GPS (display only — never
+transmit)
+Zoom >100%: optional pixelated vs smooth rendering toggle
+5.6 Archive Viewer (zip/tar/gz)
+Contents listed as: name, uncompressed size, compressed size
+Folders shown as expandable tree or navigable list (choose navigable
+list with breadcrumb — simpler and robust)
+Tap a file inside archive:
+Text/image/media → decode to memory or temp file and open in the
+corresponding viewer (pass bytes; viewers must accept bytes OR path)
+Unknown → hex view of the entry
+"Extract all…" → SAF directory picker → extract with progress dialog
+(isolate! archive extraction must run in a background isolate via
+compute()/Isolate.run with progress messaging)
+Large archives (>200MB): stream-read entries rather than loading
+whole archive where the archive package allows; otherwise warn
+Password-protected ZIPs: prompt, support via archive package if it
+supports it; if not, show clear "encrypted archives not supported yet"
+5.7 HTML Viewer
+Render in offline WebView via WebView.controller.loadHtmlString()
+or loadFile() with about:blank base
+BLOCK ALL NETWORK: implement via WebViewClient that returns
+shouldInterceptRequest denying every external request (or use
+loadHtmlString with baseUrl null + meta CSP injection: inject
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'...">
+into the HTML head before rendering — this is CRITICAL for the
+offline promise)
+Local relative assets: if the HTML references sibling files that
+exist (same directory), serve them via an in-app asset handler only
+from that directory (path traversal guarded)
+Toggle: Rendered ↔ Source (uses code viewer with html highlighting)
+JS: disabled by default; toggle in overflow menu to enable
+(still network-blocked) for local interactive HTML
+5.8 Office Viewers (docx/xlsx/pptx) — BEST-EFFORT
+Strategy (docx): unzip in-memory → parse word/document.xml → extract
+paragraph text with basic formatting (bold/italic/headings) → render
+with flutter_markdown or RichText. Show banner: "Simplified preview —
+layout/formatting may differ."
+Strategy (xlsx): unzip → parse sheet XML → render data grid
+(Scrollable two-dimensional table) — values only, no formulas evaluated
+Strategy (pptx): unzip → per-slide text extraction → slide deck of
+text cards
+
+If any of this proves too complex for the AI implementation in one
+pass: minimum acceptable fallback = show extracted plain text with
+the banner. NEVER crash. NEVER show a raw XML dump.
+5.9 Hex Viewer
+Virtualized ListView (lazy chunk reads, 4KB pages)
+3-column layout: hex offset, hex bytes (16/row), ASCII gutter
+Jump-to-offset input, Go-to-page
+Tap a byte → highlight → info: offset, value, char
+Search: hex pattern or ASCII string
+6. UI/UX DESIGN SYSTEM
+6.1 Theme
+Material 3 (useThemeMode: system default, user override persisted)
+Light + Dark themes fully specified (define both; dark default =
+pure black backgrounds where OLED-friendly in viewers)
+Accent color: pick a calm teal/cyan (exact: Color(0xFF00BFA5)) —
+single accent, no gradients in functional UI
+Typography: default platform font; code viewers use JetBrains Mono or
+Fira Code bundled as assets (include both, user-selectable, persisted)
+6.2 Screens
+Home:
+Large "Open File" hero button
+Recent files list (icon by type, name, size, relative time,
+swipe-to-remove entry)
+Bottom app bar: Home | Settings | About
+Empty state illustration (simple vector) + tagline:
+"Any file. Any format. Zero internet."
+Viewer Router screen: invisible — detects type and immediately
+pushes the right viewer
+Settings (minimal):
+Theme: System/Light/Dark
+Default font size for text viewers
+Code font: JetBrains Mono / Fira Code / System Mono
+"Clear recent files" button
+"Clear cache" button (extracted temp files)
+Privacy section: static text confirming "This app has no internet
+permission and collects nothing." + link to local offline privacy
+notice
+About: app name, version, licenses page (showLicensePage with
+all OSS package licenses — REQUIRED for license compliance),
+GitHub/contact placeholder
+6.3 Interaction Rules
+All destructive actions (clear recents/cache) require a confirm dialog
+Every long operation (>300ms) shows progress feedback
+Haptic feedback on: double-tap media seek, pull-to-refresh
+Back button: in fullscreen viewers, first back exits fullscreen;
+second back leaves viewer (standard Android expectation)
+Handle process death: viewers must restore state (current page,
+scroll position, playback position) via saved-instance mechanisms or
+persisted keys
+7. PERFORMANCE REQUIREMENTS (HARD RULES)
+Cold start: ≤2s to interactive Home on a Snapdragon 6-series
+class device
+Open file: ≤500ms for text/image <5MB; ≤1.5s PDF 10MB; video
+time-to-first-frame ≤1s for local MP4 1080p
+Memory: opening a 100MB PDF must not exceed 300MB RSS; streaming
+preferred for media (media_kit does this natively)
+Isolates: any parse/extract/hash operation on files >1MB MUST run
+in a background isolate. UI thread must never block.
+Caching: extracted temp files go in getTemporaryDirectory(),
+namespaced openfile_cache/, auto-cleared on clearCache and
+best-effort cleanup on app start if >200MB
+8. SECURITY & PRIVACY (HARD RULES)
+AndroidManifest.xml: NO android.permission.INTERNET. Verify this
+in CI/build check — fail the build if present.
+No Firebase, no analytics, no ads SDKs, no crashlytics — nothing that
+phones home.
+WebView: CSP injection + request interception as specified (5.7).
+Even "JS enabled" mode must be network-blocked.
+Path traversal: when serving archive entries or sibling HTML assets,
+canonicalize paths and reject anything escaping the source root.
+Do not log file contents anywhere. Debug logging may include file
+names in debug builds only, stripped in release (kReleaseMode
+guards).
+Zip-slip protection on extraction (validate entry paths).
+Permissions requested: READ_MEDIA_* (media),
+READ_EXTERNAL_STORAGE maxSdk (legacy), MANAGE_EXTERNAL_STORAGE — NO,
+do not request it. Use SAF/file_picker + media permissions only.
+9. ERROR HANDLING & RESILIENCE
+Every viewer wraps parsing/rendering in try/catch → error widget with:
+Human-readable reason (corrupt file / unsupported variant /
+out of memory)
+"Try opening as text" (for near-text binaries)
+"Open with another app"
+"Copy error details" (technical string, local clipboard only)
+OutOfMemory guard: catch and degrade (e.g., image → downsampled
+preview) rather than crash
+Unknown crash guard: global zone/flutter error handler → friendly
+in-app error screen (no external reporting)
+10. ACCESSIBILITY
+All interactive elements ≥48dp touch targets
+Semantic labels on all icons/buttons (Semantics or tooltip)
+Respect system font scale in text viewers (with user override)
+Media player controls reachable via screen readers (standard Material
+controls get this mostly free — don't rebuild custom controls that
+break semantics)
+Color contrast ≥ WCAG AA for text
+11. INTERNATIONALIZATION
+Structure all strings via l10n arb files from day one
+Ship English initially; no hardcoded UI strings anywhere
+Date/size formatting via intl with locale awareness
+12. TESTING REQUIREMENTS
+Unit tests (required):
+File type detection pipeline (magic numbers, extensions, edge
+cases: no extension, double extension like file.pdf.txt,
+uppercase extensions)
+Text encoding detection
+Archive listing/extraction (including zip-slip rejection)
+Office text extraction (fixture files in test assets)
+Widget tests: Home screen, viewer router dispatch table, settings
+Integration test (one happy path): pick file → open PDF → verify
+page indicator → back
+Test fixtures: generate small real files for each Tier 1 format in
+test/fixtures/ (script included)
+13. BUILD & RELEASE CHECKLIST
+App ID: com.openfile.viewer (or your own — configurable constant)
+App name: "OpenFile"
+Icons: adaptive icon, simple document+eye motif, monochrome layer
+included
+Enable shrinkResources, minifyEnabled with proper ProGuard rules
+for all packages (media_kit and webview need keep rules — document
+them)
+Split per ABI (arm64/apk splits) to keep download size low
+Target latest stable Flutter; pin versions in pubspec.lock
+Release build must be verified OFFLINE: install on device with
+airplane mode, open every Tier 1 format successfully
+14. V1 SCOPE BOUNDARY (what NOT to build yet)
+Explicitly out of scope for v1 (do not scaffold dead code for these):
+
+File editing/saving
+Format conversion
+Playlists / media library browsing
+Cloud storage connections
+Folder browsing inside the app
+Plugin system for new formats
+iOS-specific polish (keep compiling, don't perfect)
+Widgets, PiP, picture-in-picture
+Printing
+15. AI IMPLEMENTATION ORDER (follow sequentially)
+Scaffold project + folder structure + theme + l10n shell + Riverpod
+Core: file type detection pipeline (+ unit tests)
+Home screen with file_picker + recents (shared_preferences)
+Viewer Router + Common Viewer Shell
+Text/Code viewer (highlighting, search, encodings)
+Image viewer
+PDF viewer
+Archive viewer (+ extraction to SAF with isolate + progress)
+HTML viewer with network-blocking CSP
+Media player (video then audio, gestures, subtitles)
+Hex viewer
+Office best-effort viewers (docx → xlsx → pptx)
+Error handling hardening + large-file guards
+Accessibility pass + licenses page
+Build release APK, run offline verification checklist (section 13)
+16. DEFINITION OF DONE (v1)
+ All Tier 1 formats open correctly from both file picker and
+"Open with" intent, in airplane mode
+ Zero network permissions; release APK verified with
+apkanalyzer / manifest check
+ All unit tests pass; detection coverage for the full Tier 1 map
+ Large-file paths (100MB PDF, 2GB video, 50MB text) don't crash
+on 2GB RAM device
+ License page lists all OSS licenses
+ App size < 50MB (arm64 APK)
+ No TODO/FIXME left in Tier 1 code paths

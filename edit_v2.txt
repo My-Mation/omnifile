@@ -1,0 +1,159 @@
+0. WHAT CHANGES IN V2 (summary for the AI)
+The app is no longer viewer-only. It becomes a viewer + editor. The rules.txt §1.3 statement "NOT a file editor" is SUPERSEDED.
+The Home screen is redesigned (library with search, type filters, recently-added hero card) — ui_rules.txt §9.2 is SUPERSEDED by section 5 of this file.
+The app's identity rules are UNCHANGED and remain absolute: 100% offline (no INTERNET permission), free, no ads, no telemetry. ALL editing/OCR happens on-device.
+Editing follows a strict safety model: originals are NEVER modified. Every save produces a NEW file.
+
+1. EDITING PHILOSOPHY & HARD RULES
+1.1 The Golden Save Rule (NON-NEGOTIABLE)
+The original file is read-only to the app, forever.
+"Save" always creates a NEW document via SAF createDocument (default name: "<original> (edited).<ext>"), user can rename/choose location. If a file with the chosen name exists, append (2), (3)…
+Session undo/redo stack per editor (minimum 50 steps). Undo history is lost on close (persistent edit history = v2.1, not now).
+Before any lossy operation (export, flatten, format-strip), show a dialog listing exactly what will be lost. Never degrade silently.
+
+1.2 Offline Editing Rule (NON-NEGOTIABLE)
+OCR, format parsing, rendering, export: all 100% on-device.
+FORBIDDEN: any cloud OCR API, any "online converter" fallback, any Firebase ML remote model. If a package requires a network round-trip at edit time, it is banned.
+ML Kit base Latin text-recognition model is bundled in the APK (~4MB) — verify the build works in airplane mode from first launch. Script models beyond Latin (Chinese, Devanagari, etc.) are OUT OF SCOPE for v2 (they require on-demand download).
+
+1.3 The Editing Reality Table (do NOT hallucinate beyond this)
+State these capabilities EXACTLY as written in UI copy — no overpromising:
+
+Format | Editing capability in v2 | Technique
+TXT/MD/Code/CSV/JSON/XML/HTML(source) | FULL edit: insert/delete/replace, find&replace, syntax highlighting retained while editing | Editable text field (flutter_code_editor, readOnly:false)
+Images (JPG/PNG/WEBP) | FULL edit: add text (font/size/color), freehand draw, crop, rotate, brightness/contrast; export | Canvas overlay editor
+PDF | LAYER-BASED edit (see §3): text boxes, highlights, freehand ink, shapes, form fill; OCR-extract→edit→export-new-PDF. TRUE in-place text rewrite of existing PDF body text is IMPOSSIBLE — do not attempt, do not claim it in UI copy | Syncfusion PDF annotations + flatten on export
+XLSX | FULL cell editing: values, add/delete rows/cols, basic styling (bold/align), multi-sheet | excel package (pure Dart read+write)
+CSV | Full edit + table editor UI | Text engine + grid view
+DOCX | TEXT-LEVEL edit of existing paragraphs & new paragraphs (inherit neighbor style). Formatting of untouched runs preserved. NOT a layout editor. | unzip → edit word/document.xml → rezip
+PPTX | TEXT-LEVEL edit inside existing text frames only. No new slides/layouts. | unzip → edit slide XMLs → rezip
+EPUB | OUT OF SCOPE v2 (read-only) | -
+
+2. NEW PACKAGES (add to pubspec, per phase.txt approval flow)
+dependencies:
+  google_mlkit_text_recognition: # on-device OCR, base Latin model bundled
+  syncfusion_flutter_pdf: # PDF annotation/flatten/form/create
+  excel: # pure-dart xlsx read/write
+  xml: # docx/pptx XML manipulation
+  image: # final image export encode
+
+Justification entries required in PHASE_LOG.md for each (why, license check, offline check). If the AI proposes pro_image_editor or similar heavy editor suite for images, it MAY, provided: offline, no trackers, license compatible, APK impact documented — otherwise build the canvas editor natively per §4.2.
+
+3. PDF EDITING (layer-based — the honest model)
+3.1 Two edit modes, one editor screen
+Mode A — ANNOTATE (visual layer on original pages):
+- Text box tool: tap to place, drag to move, pinch font size, color picker (10 swatches), editable text; rendered as real PDF text
+- Highlight tool: drag rectangles, yellow default, opacity 40%
+- Ink tool: freehand pen, 3 widths, 8 colors, pressure-naive
+- Shapes: rectangle/ellipse/arrow/line, stroke + optional fill
+- Form fields: detect AcroForm fields (Syncfusion) → tap to fill text/checkbox/radio; flattened on save
+- Eraser: tap annotation to delete; long-press any annotation → context popup: Edit / Style / Delete (ui_rules popup pattern)
+- Undo/redo covers every annotation op
+
+Mode B — EXTRACT & REWRITE (content editing):
+- "Extract text" button → runs OCR (§4) + embedded-text extraction (use embedded text when present, OCR only for scanned pages)
+- Produces an editable text document (per-page sections, headings heuristic from font size), opened in the Text editor
+- "Export as PDF" from that editor → builds a NEW clean PDF (typed text, A4, simple heading/body styles). UI copy must say: "Creates a new, clean PDF from the extracted text" — NOT "edits your original"
+
+3.2 Save/export
+- "Save" (Mode A) → flattens annotations into a NEW PDF copy (Syncfusion flatten), never touches source
+- Page ops allowed while annotating: rotate page, delete page, reorder (thumbnails strip, bottom sheet) — all via Syncfusion
+
+3.3 PDF editor UI (extends ui_rules §9.6)
+- Same viewer canvas + auto-hiding chrome; tool palette replaces overflow when Edit mode is on (pencil icon toggles Edit/View)
+- Tool palette: bottom-docked, 72dp, horizontal scroll chips with icons: Select | Text | Highlight | Ink | Shape | Image stamp | Form | Pages. Selected chip = accent fill
+- Annotation selected: floating popup card (Edit/Copy/Delete like the library popup spec §5.4)
+- Zoom/pan unchanged while a tool is active; tool tap lands through transform (convert screen→page coords correctly — test at 3x zoom)
+
+4. OCR PIPELINE (shared by PDF Mode B and Image text-editing)
+- Engine: google_mlkit_text_recognition, Latin bundled model
+- Input: PDF page render (150–300dpi raster, choose by page size cap 2048px) OR image file
+- Output model: list of TextBlocks → lines → with bounding boxes + confidence; group into paragraphs by line gaps
+- UX: full-screen progress ("Reading page 3 of 12…", cancelable), then a Review screen: page image with detected blocks boxed + extracted text beside it; user can fix, then insert into editor
+- Language: attempt Latin first; if confidence <0.5 on >30% of blocks, show notice: "Text may be in an unsupported script — results may be poor"
+- NEVER log or persist OCR text beyond the open document session (privacy rule) unless user saves
+
+5. UI V2 REDESIGN (SUPERSEDES ui_rules.txt §9.2 Home + adds screens)
+5.1 Design language amendment
+- Keep ALL tokens (§2), type scale, motion, touch rules from ui_rules.txt.
+- AMENDED: gradients are now permitted in exactly ONE place — the Home header (see 5.2). Everywhere else stays flat.
+- AMENDED: file-type icons in lists become solid rounded-square badges: 40dp, 12dp radius, SOLID semantic color (§2.4 colors), white bold 14sp label/glyph (PDF, XLS, W, P, </>, ♪…). Update the custom painter accordingly.
+- Dark theme: NO gradient — header uses surface.app flat. All other v2 components themed from existing tokens.
+
+5.2 HOME (library) — new structure (light theme reference: soft sky gradient, calm, spacious)
+- Header (gradient light: #6EC9F2 → #B7E3F7 → surface.app, 280dp tall, content padded 20dp):
+  - Row: greeting "Good morning 👋" (titleLarge; time-based: morning/afternoon/evening) + trailing: 44dp white circle icon buttons (folder-add, settings) with 8dp gap
+  - 16dp gap: Search pill (spec ui_rules 8.8 but white bg, 90% opacity, height 48dp, "Search your documents…")
+  - 20dp gap: filter chips row (horizontal scroll): All | PDF | Word | Excel | PPT | Code | Media | Archive. Chip: white pill (unselected: surface.card bg, text.primary) / selected: dark slate #23505C bg, white text, labelLarge
+  - 20dp gap: Recently Added hero card: full-width, 96dp height, dark slate #23505C, 16dp radius, leading 48dp white-on-teal doc icon tile, titleMedium white "Recently Added", bodySmall white70 "View your latest files in one place", trailing chevron. Tap → recents list screen
+- 24dp: Section row "All Documents" (titleMedium) + "See all" (labelLarge accent)
+- Document list (library, spec 8.3 tiles with new badge icons): name, "04/05/2026 · 161.5 KB" subtitle, kebab → floating popup: [Edit(pencil)] [Copy] [Delete(red)] — white rounded 12dp card, 3×52dp rows, elevation 3, anchored under kebab
+- Library data sources (scoped-storage-legal):
+  - MediaStore query: Downloads/Documents/Pictures/Video/Audio where accessible
+  - User-picked folders: SAF "Add folder" (persistable tree URI), recursive index, stored in shared_preferences
+- Empty state: illustration + "Add a folder to build your library" + Add-folder outlined button
+- Bottom nav unchanged (Home/Library merged; tabs: Home, Settings, About)
+
+5.3 EDITOR SHELL (all editors share this chrome)
+- Top bar: X (confirm-discard-if-dirty), "Edit <name>" title, Save (filled, disabled until dirty), kebab (Export as…, File info)
+- Dirty guard: back/X with unsaved changes → dialog "Discard changes?" [Discard(filled error)] [Keep editing(text)]
+- Content area per type (below)
+- Bottom: shared formatting toolbar (5.4) — only shown by editors that use it (text, docx, pdf-text-boxes)
+
+5.4 FORMATTING TOOLBAR (shared component)
+- Docked bottom, 64dp, surface.card, top border 1dp divider
+- Items (48dp hit each, icon + 10sp label below): Keyboard(toggle) | B | A- | A+ | T(underline) | Color | ⋮More
+- Toggle states: accent icon + accent label; inactive text.secondary
+- "More" opens bottom sheet: italic, strikethrough, alignment (L/C/R), line-height, clear formatting
+- Selection popup inside editable content: floating white card [Edit][Copy][Delete] as in 5.2.4
+
+5.5 EDITOR SCREENS PER TYPE
+- Text/Code/MD/CSV: flutter_code_editor editable, highlighting ON while editing, find&replace panel (add "Replace/Replace all" row to 8.7 spec), CSV gets optional table-grid edit mode toggle (sheet-chip switch: Text ↔ Table); Table mode: tap cell → inline edit field
+- Image: canvas editor — layers list (text layers, ink strokes), tools rail: Text | Draw | Crop | Rotate | Adjust(brightness/contrast sliders) | Layers. Text layer: drag/pinch/color/opacity; export via canvas snapshot → image re-encode (JPG q90 default, PNG if original PNG)
+- PDF: per §3.3
+- XLSX: grid editor (sheet tabs top like §9.14), cell edit → inline field; toolbar context: Bold/Align/±row/±col; excel package load with formatting-preserving read where supported; unsupported styling dropped WITH warning at save (dialog lists what will be lost)
+- DOCX: rendered preview pane + "Tap paragraph to edit" — tapping a paragraph opens it in the text editor bound to that XML node; new paragraph button inserts after selection inheriting style; preview refreshes on Save
+- PPTX: slide cards (§9.14) → tap slide → text-frame list → tap frame → inline edit; Save rezips preserving everything untouched
+
+6. EXPORT MATRIX
+Editor | Export options
+Text/MD/Code | same format; MD→PDF (clean styled), MD→HTML
+CSV | CSV, XLSX (via excel)
+Image | JPG/PNG, size/quality dialog
+PDF Mode A | Flattened PDF copy
+PDF Mode B | New clean PDF; TXT
+XLSX | XLSX, CSV (active sheet)
+DOCX | DOCX copy; TXT extract; PDF (text-flow render via pdf-create — labeled "simplified layout")
+PPTX | PPTX copy; TXT extract
+
+All exports follow Golden Save Rule (new file, SAF).
+
+7. NEW PHASES (continue numbering from phase.txt)
+PHASE 8 — UI V2 LIBRARY SHELL
+Build §5.1–5.2 (gradient header, search, chips, hero card, library indexing via MediaStore + SAF folders, popup menu), migrate recents into hero flow, dark-theme variant. Acceptance: library lists real device files in airplane mode; filters work; popup Edit/Copy/Delete (Copy/Delete can be stubs wired to share/info for now); analyze+test green.
+
+PHASE 9 — TEXT-SIDE EDITING (text/code/md/csv) + IMAGE EDITOR
+Build editor shell §5.3, toolbar §5.4, text editors + find&replace, CSV table mode, full image canvas editor per §5.5 + OCR text-on-image uses pipeline §4 (place text manually; auto-detect optional button). Acceptance: edit 2MB py with highlighting; save-as via SAF never touches original; undo/redo 50 steps; image export correct format; airplane mode; corrupt file → error state, no crash.
+
+PHASE 10 — PDF EDITING + OCR CORE
+Syncfusion integration + license key; Mode A tools (text, highlight, ink, shape, form fill, page ops) with flatten-save; Mode B extract (embedded text first, OCR fallback) → edit → export new PDF; OCR review screen. Acceptance: annotate at 3x zoom accurately; form PDF fills+flattens; scanned-PDF OCR roundtrip ≤15s/page mid-range; embedded-text PDF extraction does NOT invoke OCR; originals byte-identical after save (hash check in test).
+
+PHASE 11 — OFFICE EDITING
+XLSX full cell editing via excel; DOCX text-level via XML edit + preview refresh; PPTX text-frame editing; legacy .doc/.xls/.ppt stay read-only with notice. Acceptance: roundtrip real xlsx/docx/pptx fixtures — untouched parts byte-preserved or provably equivalent; styling-loss warning appears when applicable; 20 corrupt fixtures → no crashes.
+
+PHASE 12 — V2 INTEGRATION & RELEASE
+Export matrix complete; Golden Save Rule verified everywhere (hash tests); library ↔ editor deep links (Edit from library, edited file re-indexes); performance pass (open 10MB xlsx ≤2s, PDF annotate 60fps pan); a11y pass on all new UI; manifest re-verified (STILL zero INTERNET — ML Kit bundled model confirmed offline); DoD checklist rules.txt §16 re-run + all v2 acceptance lists; README v2 with honest capability table from §1.3.
+
+8. UPDATED ANTI-GOALS (additions to goals.txt §8)
+❌ Never overwrite/modify an original file — save-as only
+❌ Never claim "edit PDF text in place" in any UI copy
+❌ Never ship an OCR/edit feature that phones home (verify offline from first run, airplane-mode test mandatory)
+❌ Never silently drop user formatting on save (always warn+list)
+❌ Never let the library index store file CONTENTS — paths, metadata, and thumbnails only
+
+9. V2 DEFINITION OF DONE (adds to rules.txt §16)
+- Every §1.3 row behaves exactly as specified, airplane mode
+- Original-file immutability proven by hash tests across all editors
+- OCR works offline on first run after fresh install
+- Library indexes 500+ files without jank (paged loads)
+- v1 viewer features show ZERO regression (rerun full v1 matrix)

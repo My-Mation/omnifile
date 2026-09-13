@@ -1,0 +1,160 @@
+============================================================================
+PROJECT: OpenFile - Universal Offline File Viewer
+FILE: goals.txt (GOALS, ROADMAP & SUCCESS CRITERIA)
+VERSION: 1.0.0
+COMPANION TO: rules.txt (behavior) + ui_rules.txt (design)
+PURPOSE: The "why" and "how well" — read before making ANY scope or
+priority decision. If a feature doesn't serve a goal here, cut it.
+============================================================================
+1. NORTH STAR (the one sentence)
+"Every Android user should be able to open ANY file on their device,instantly, privately, and forever free — with a single app that nevershows an ad, never asks for money, and never phones home."
+
+Everything we build either moves toward this sentence or it gets cut.
+
+2. USER GOALS (what a user can do on day one)
+G1. Open any common file in under 2 seconds
+PDF, images, video, audio, text/code, ZIP, HTML, markdown — all openfrom the file picker or "Open with" menu, fully offline
+MEASURE OF DONE: 100% of Tier 1 formats (rules.txt §3.1) opensuccessfully in airplane mode on a mid-range device
+G2. Never hit a dead end
+If we can't render a file, the user ALWAYS gets a next step:open-as-text, open-as-hex, or hand off to another app
+NO state exists where the user sees "Cannot open file" with noaction buttons
+G3. Never worry about privacy
+User can give this app sensitive files (contracts, ID scans,medical docs) without a second thought
+MEASURE OF DONE: zero INTERNET permission, verifiable in the APK;stated plainly on the About screen
+G4. Never pay or be nagged
+No ads, no "pro" version, no trial timers, no rating popups — ever
+The absence of these IS the product experience
+G5. Use it one-handed, with thumbs
+All core actions (open, play, seek, extract) reachable in the lowerhalf of the screen
+G6. Pick it up after 6 months and it still works
+No accounts, no forced updates, no expiring features, no serverdependencies that can rot
+3. PRODUCT QUALITY GOALS (measurable, v1.0 gate)
+Q1. Reliability
+Crash-free session rate ≥ 99.5% across Tier 1 formats
+Zero crashes on corrupt/malformed files (fuzz-tested with 50garbage/mutated fixtures per format)
+Opening an unsupported file NEVER crashes — always lands in theTier 3 fallback path
+Q2. Performance (hard numbers, from rules.txt §7)
+Cold start ≤ 2s on Snapdragon 6-series class device
+Text/image < 5MB: open ≤ 500ms
+PDF 10MB: ≤ 1.5s
+Local 1080p MP4: first frame ≤ 1s
+No UI-thread jank (frames dropped >16ms budget) during file open,archive listing, or scroll in any list
+Q3. Efficiency
+APK size < 50MB (arm64 release, per-ABI split)
+Opening a 100MB PDF stays under 300MB peak memory
+Media playback streams (no full-file load) for all video
+Q4. Coverage
+Tier 1 formats: full support, tested with real-world fixtures
+Tier 2 formats: working best-effort with clear "limited preview" UI
+50+ file extensions recognized correctly by the detection pipeline(unit-tested against the full extension + magic number map)
+Q5. Polish
+Every screen implements all 4 states (loading/empty/error/content)
+Dark theme is pixel-perfect (this is the DEFAULT viewing theme)
+Accessibility: TalkBack can operate every core flow with zerounlabeled controls
+4. TRUST GOALS (what makes people recommend it)
+T1. Verifiable privacy
+Anyone can inspect the manifest and see no INTERNET permission
+The app works identically with airplane mode ON permanently
+License page is complete (all OSS licenses shown — legal + trust)
+T2. Radical transparency
+App "clears cache" and "clears recents" buttons actually cleareverything (verifiable via device storage inspection)
+No hidden databases of file contents, ever
+T3. Respect for the ecosystem
+Never hijacks file associations aggressively; always offers"open with another app" as a first-class action
+Graceful behavior in split-screen, foldables, and low-storage states
+5. TECHNICAL GOALS (engineering principles as goals)
+TG1. Deterministic file detection
+Detection pipeline (extension → magic bytes → heuristic) is a pure,unit-testable function with 95%+ branch coverage
+New format support = adding ONE entry to a registry, not touchingviewer code (open-closed principle)
+TG2. Viewer modularity
+Each viewer is an isolated module behind a common interface(ViewerShell); removing or replacing one viewer never breaks others
+A new contributor can add a new viewer by implementing one class +one registry entry
+TG3. Zero main-thread I/O
+Every file read, parse, hash, or extract > 1MB runs in an isolate
+Enforced by lint rule + code review checklist
+TG4. Reproducible builds
+All dependency versions pinned; build verified offline from a cleancheckout; release checklist (rules.txt §13) is a script, nottribal knowledge
+TG5. Testability
+Detection, archive, and office-extraction logic has no Flutterimports (pure Dart) — unit tests run in milliseconds
+Golden tests exist for Home, Settings, and error states in both themes
+6. ROADMAP GOALS (phased)
+PHASE 1 — v1.0 "The Universal Opener" (launch target)
+Goal: nail the core promise. Nothing else.
+
+ All Tier 1 viewers complete and offline-verified(PDF, text/code, image, video, audio, ZIP, HTML, markdown)
+ All Tier 2 viewers at best-effort quality (office, epub, SVG, TAR)
+ Tier 3 fallback chain (text-detect → hex → hand-off)
+ "Open with" intent registration for common MIME types
+ Recent files (20 entries, local only)
+ Light/dark themes + all 4 UI states everywhere
+ Definition of Done checklist (rules.txt §16) 100% complete
+PHASE 2 — v1.1 "Depth Pass" (post-launch, ~1 month)
+Goal: make the most-used viewers exceptional based on real feedback.
+
+ Video: PiP support, subtitle styling persistence, multi-trackaudio/video switching UI
+ PDF: outline/bookmarks panel, text selection + copy, search
+ Text: jump-to-line, compare-recent feature (diff two recents)
+ Archives: password-protected ZIP support, per-entry previewimprovements
+ Office viewers: better docx formatting fidelity (tables, lists)
+ Android widget: "Open file" quick shortcut on home screen
+ Crash analytics — LOCAL ONLY (in-app error log viewer, exportableby user choice; still zero network)
+PHASE 3 — v1.2 "Coverage Pass"
+Goal: widen the net to more formats with the same quality bar.
+
+ EPUB reader v2 (progress sync across sessions, chapter list,in-book search)
+ RTF, ODT/ODS/ODP (OpenDocument) best-effort viewers
+ More archives: RAR (read-only), 7z (read-only)
+ CSV: structured table view with sorting/filtering
+ Font files preview (.ttf/.otf sample text render)
+ Localizable string audit: 100% of UI through l10n; communitytranslation-ready
+PHASE 4 — v2.0 "The Suite Bridge"
+Goal: become the foundation for the planned companion apps.
+
+ Stable internal API surface so a future file manager app canhand files to OpenFile programmatically
+ Optional: iOS parity pass (publish on App Store)
+ Optional: desktop (Windows/Linux) via same Flutter codebase —ONLY if viewer quality doesn't regress on mobile
+ Plugin-ready format registry (community-contributed viewers)
+7. ADOPTION GOALS (success metrics for a free app)
+Since there's no revenue, success = reach + trust + retention:
+
+A1. First 90 days after launch
+10,000+ installs
+Play Store rating ≥ 4.6
+Crash rate (Android Vitals) in top 25% of Utility category
+≥ 30% of installers return in week 2 (utility retention baseline)
+A2. Trust markers
+Featured/mentioned in at least one "ad-free Android apps" roundupor FOSS community (r/fossdroid, r/androidapps, F-Droid listing)
+GitHub stars ≥ 500 if open-sourced (target: open-source the app —it's the strongest possible proof of the privacy claims)
+A3. Long-term (12 months)
+100,000+ installs
+The default answer on Reddit/forum threads asking "how do I open[format] on Android" becomes "OpenFile handles that"
+A4. F-Droid listing (stretch but aligned)
+Ship an F-Droid-compatible build (reproducible, FOSS licenses only) —this audience IS the target user
+8. ANTI-GOALS (permanent — these never happen, by design)
+❌ Never show ads, in any form, in any version
+❌ Never collect analytics, telemetry, or crash reports to a server
+❌ Never add internet permission for ANY reason (including "helpful"features like online subtitle search or update checks)
+❌ Never gate existing functionality behind payment or account
+❌ Never bundle bloat: no Firebase, no Play Core feature delivery,no background services
+❌ Never re-implement a file manager, converter, or editor insideOpenFile (those are separate future apps — keep this one focused)
+❌ Never let app size exceed 60MB even as formats are added(per-ABI splits + asset auditing enforce this)
+❌ Never break the airplane-mode guarantee: every release is verifiedfully functional with all radios off
+9. DECISION FILTER (use this for every feature request)
+When considering ANY new feature, run it through this ladder in order:
+
+OFFLINE? → Does it work with zero network? If no → REJECT.
+FREE? → Can we offer it without payment/account/tracking? No → REJECT.
+FOCUSED? → Is it about OPENING/VIEWING a file? No → park it in theroadmap for a companion app instead.
+FAST? → Can it be implemented without breaking Q2/Q3 budgets? No →redesign or defer.
+SIMPLE? → Does it make the UI simpler or merely fuller? Fuller →strong justification required.
+If a feature passes all five, it moves to the bottom of the relevantphase list. If it fails any, it goes in the ideas graveyard (notdeleted — re-evaluated at each major version).
+
+10. GOAL OWNER'S SUMMARY (the elevator pitch to yourself)
+OpenFile wins not by having the most features, but by being the onlyfile viewer a person needs AND the one they never have to think about:
+
+It opens everything reasonable (G1, Q4)
+It fails gracefully when it can't (G2)
+It never betrays the user's data (G3, T1–T2)
+It never wastes their time or money (G4)
+It's fast enough to feel native to the device (Q2, Q3)
+Every line of code either serves the north star or it doesn't ship.

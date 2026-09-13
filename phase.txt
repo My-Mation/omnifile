@@ -1,0 +1,445 @@
+============================================================================
+PROJECT: OpenFile - Universal Offline File Viewer
+FILE: phase.txt (BUILD PHASES & EXECUTION PROMPTS)
+VERSION: 1.0.0
+COMPANION TO: rules.txt + ui_rules.txt + goals.txt (READ ALL THREE FIRST)
+============================================================================
+0. HOW TO USE THIS FILE (instructions for the AI)
+This file defines 7 sequential build phases. Each phase produces aCOMPILING, RUNNABLE app with new functionality added.
+At the start of every phase session, re-read: rules.txt, ui_rules.txt,goals.txt, and the PHASE COMPLETION LOG (see below).
+Maintain a file called PHASE_LOG.md in the project root. After eachphase, append: phase number, date, what was built, decisions made,known issues, and files created/modified.
+NEVER start phase N+1 without explicit user instruction. Afterfinishing a phase, STOP and output the acceptance checklist for theuser to verify on their device.
+Every phase MUST end with: flutter analyze = 0 issues,flutter build apk --debug = success, app launches without crash.If it doesn't compile, the phase is NOT done.
+If you discover a conflict between specs, resolve per rules.txtui_rules.txt precedence note (behavior: rules.txt wins; appearance:ui_rules.txt wins) and log it in PHASE_LOG.md.
+Do not add any package, permission, or dependency not listed inrules.txt section 4.3 without writing a justification in PHASE_LOG.mdand getting user approval.
+Phase dependency map
+Phase 1 (Shell) ──► Phase 2 (Text/Code) ──► Phase 3 (PDF/Image)
+│
+Phase 4 (Media) ◄─────────────────────────────┘
+│
+Phase 5 (Archive/HTML) ──► Phase 6 (Fallbacks/Office)
+│
+Phase 7 (Integration/Release)
+
+text
+
+Phases 3 and 4 both depend only on Phase 2 — if one blocks you,
+the other can proceed. Phases 5–7 are strictly sequential.
+
+---
+
+## ============================================================================
+## PHASE 1 — FOUNDATION & APP SHELL
+## Objective: A running app with theme system, navigation, file picker,
+## and recent files. No viewers yet — picking a file shows its info.
+## ============================================================================
+
+### READ FIRST
+rules.txt §1–§4.5, §6; ui_rules.txt §1–§9.2 (all component specs),
+§13; goals.txt §2, §5.
+
+### BUILD
+1. Scaffold Flutter project with the EXACT folder structure from
+   rules.txt §4.1. Set app ID, name "OpenFile", dark+light Material 3
+   themes from ui_rules.txt §2 (build the full ThemeExtension with all
+   color tokens — both themes complete, not stubs).
+2. NavigationBar with 3 destinations: Home, Settings, About
+   (ui_rules.txt §9.2, §9.3, §9.4). Settings and About are FULLY
+   built in this phase (they're cheap and stabilize the shell):
+   - Settings: all tiles functional — theme picker (working),
+     code font picker (stores preference, used later), text size
+     slider (stores preference), word wrap / subtitle / playback
+     position toggles (store only), Clear recents (works), Clear
+     cache (works — creates the cache dir and reports size),
+     Privacy group (static text).
+   - About: version from pubspec, showLicensePage wired, tagline.
+3. Home screen per ui_rules.txt §9.2: header, hero "Open File"
+   button, recents list, empty state. Wire file_picker
+   (FileType.any). On pick: run NOTHING yet — show the File Info
+   dialog (name, size, path, modified date) as proof of plumbing.
+4. Recents system: shared_preferences-backed, max 20 entries
+   (path, name, size, timestamp, detected-type placeholder "unknown").
+   Swipe-to-delete with UNDO snackbar (ui_rules.txt §8.3). Clear-all
+   with confirm dialog. Re-opening updates position, not duplicate.
+5. Bundle the two code fonts (JetBrains Mono, Fira Code) as assets and
+   wire the font preference through (nothing consumes it yet).
+6. Splash behavior: skip splash if Home ready <400ms (rules.txt/ui_rules).
+7. Create PHASE_LOG.md with initial entry.
+
+### OUT OF SCOPE
+Any viewer. Any file-type detection beyond placeholder. Any package
+beyond §4.3 list.
+
+### ACCEPTANCE CRITERIA (user verifies on device)
+- [ ] App installs and launches in <2s, splash skips when fast
+- [ ] Bottom nav switches 3 screens, theme follows/persists choice
+- [ ] Pick file → info dialog shows correct name/size/date
+- [ ] Picked file appears in recents; swipe removes with UNDO;
+      clear-all works with confirm
+- [ ] Settings toggles persist across app restart
+- [ ] Airplane mode ON: everything still works
+- [ ] flutter analyze: 0 issues
+
+### COMPLETION PROTOCOL
+Run analyze + debug build, update PHASE_LOG.md, print the acceptance
+checklist above, then STOP.
+
+---
+
+## ============================================================================
+## PHASE 2 — DETECTION ENGINE + TEXT/CODE VIEWER
+## Objective: The file-type detection pipeline (unit-tested) and the
+## first real viewer. After this phase the app genuinely OPENS files.
+## ============================================================================
+
+### READ FIRST
+rules.txt §3 (all tiers), §4.4 (detection pipeline — implement in the
+exact order given), §5.1, §5.3; ui_rules.txt §8.7, §9.5, §9.7,
+§10 (all states); goals.txt §5 (TG1).
+
+### BUILD
+1. Domain layer: FileEntity, ViewerType enum, DetectFileType usecase.
+   Implement the full pipeline from rules.txt §4.4: extension map →
+   magic numbers (ALL listed signatures) → text heuristic → fallback.
+   Pure Dart, zero Flutter imports, fully unit-tested.
+2. Unit tests: every magic number, every Tier 1 extension, edge cases
+   (no extension, `file.pdf.txt`, UPPERCASE.EXT, empty file, 1-byte
+   file, file that is a JPEG renamed to .txt — magic must win).
+3. Viewer Router: invisible screen that maps detection result → viewer
+   (only TEXT/CODE routes to a real viewer now; others route to the
+   Unsupported screen from ui_rules.txt §10.4 — this is intentional
+   and correct for this phase).
+4. Common Viewer Shell (rules.txt §5.1): app bar with overflow menu
+   (File info, Share via share_plus, Open with via open_filex,
+   theme toggle), loading state (>300ms delayed spinner), error
+   state, double-tap fullscreen toggle, state restoration hook.
+5. Text/Code viewer per rules.txt §5.3 + ui_rules.txt §9.7:
+   - Syntax highlighting via highlight package; extension→language
+     map covering the full Tier 1 code list
+   - Line-number gutter, current-line highlight, read-only with
+     selection/copy
+   - Find bar (spec 8.7): match count, prev/next, highlight-all
+   - Encoding: auto-detect + manual picker (UTF-8, UTF-16LE/BE,
+     Latin-1, ASCII), instant reload
+   - Word wrap toggle (default: on for txt/log, off for code);
+     font size via pinch (10–28sp, persists) and menu buttons
+   - Large files: >2MB loads first 1MB with warning banner + "Load
+     more"; >50MB requires confirmation
+   - Markdown files: Rendered ↔ Source toggle (flutter_markdown
+     rendered view per ui_rules §9.7)
+6. Wire recents to store real detected type; Home list now shows
+   type-colored file icons (ui_rules §2.4, §6 custom file-icon painter).
+
+### OUT OF SCOPE
+All other viewers. Do not stub them with empty screens — route them
+to Unsupported.
+
+### ACCEPTANCE CRITERIA
+- [ ] `flutter test` passes: detection suite green (all magic numbers,
+      renames, edge cases)
+- [ ] Open a .py/.js/.json/.md/.txt file → correct highlighting,
+      gutter, line count
+- [ ] Find bar: count correct, navigation works, ESC/X closes
+- [ ] Open file saved as UTF-16 → readable; manual encoding switch works
+- [ ] 5MB+ text file: warning banner appears, "Load more" appends
+- [ ] .md toggles Rendered/Source correctly
+- [ ] Rename a .png to .txt → opens as image detection → Unsupported
+      screen (with correct info), NOT garbled text
+- [ ] Airplane mode: all of the above works
+- [ ] flutter analyze: 0 issues; flutter test: all green
+
+### COMPLETION PROTOCOL
+Analyze + test + debug build, update PHASE_LOG.md, print checklist,
+STOP.
+
+---
+
+## ============================================================================
+## PHASE 3 — PDF & IMAGE VIEWERS
+## Objective: Documents and photos open natively. The app now covers
+## the two most common file categories after text.
+## ============================================================================
+
+### READ FIRST
+rules.txt §5.2, §5.5, §7, §8; ui_rules.txt §9.6, §9.8, §12 (responsive,
+rotation); Companion prior phases in PHASE_LOG.md.
+
+### BUILD
+1. PDF viewer (flutter_pdfview) per rules.txt §5.2 + ui_rules §9.6:
+   horizontal page swipe, page indicator pill (12 / 240) with
+   jump-to-page dialog, password-protected PDF loop (max 3 attempts,
+   shake animation on failure per ui_rules), remember last page per
+   file (path-hash keyed), >50MB one-time warning. Continuous scroll
+   with 8dp page gaps; edge scrollbar with drag bubble.
+2. Image viewer per rules.txt §5.5 + ui_rules §9.8:
+   InteractiveViewer pinch 0.5x–8x with clamped pan + rubber-band,
+   double-tap zoom cycle, rotate button (persisted per session),
+   GIF/WebP animation with long-press pause, pixelated toggle >2x
+   (persisted), EXIF bottom sheet (dimensions/camera/date/GPS as
+   copyable text — NO map links ever), downsample guard for huge
+   images (catch OOM → show "too large" degraded state, not crash).
+3. State restoration: PDF page + image zoom/rotation survive process
+   death (rules.txt §6.3).
+4. Route both through the Phase-2 shell — overflow menu, fullscreen
+   toggle, and error states must work identically in both viewers.
+
+### OUT OF SCOPE
+PDF text selection, bookmarks, search (v1.1). Office formats.
+
+### ACCEPTANCE CRITERIA
+- [ ] 10MB PDF opens ≤1.5s, swipe + zoom + jump-to-page work
+- [ ] Password PDF: 3-attempt loop, then error state with retry
+- [ ] Reopen same PDF → resumes last page
+- [ ] 100MB PDF: warning shows once, opens without crash on a
+      low-RAM device (or degrades per §9 with clear message)
+- [ ] JPEG/PNG/WebP/HEIC/GIF all render; GIF pauses on long-press
+- [ ] Double-tap zoom hits tap point; pan clamps with rubber-band
+- [ ] EXIF sheet shows data; long-press copies GPS as text only
+- [ ] Corrupt PDF and corrupt image → error state, buttons work,
+      NO crash (test with 50 garbage .pdf/.jpg fixtures)
+- [ ] Rotate device mid-view → no state loss
+- [ ] Airplane mode: all works; analyze 0 issues; tests green
+
+### COMPLETION PROTOCOL
+Same as before. Update PHASE_LOG.md, print checklist, STOP.
+
+---
+
+## ============================================================================
+## PHASE 4 — MEDIA PLAYER (VIDEO + AUDIO)
+## Objective: The app plays anything libmpv can play, with full
+## gesture control and local subtitles. Hardest native phase — take it
+## in two sub-steps (video first, then audio) with separate builds.
+## ============================================================================
+
+### READ FIRST
+rules.txt §5.4, §7, §8; ui_rules.txt §9.9, §9.10, §11 (gesture map);
+media_kit README on pub.dev for CURRENT setup steps — if its init
+differs from anything assumed here, the package README wins. Log the
+exact setup used.
+
+### BUILD
+4A — VIDEO (build and verify first):
+1. media_kit integration: Player + VideoController, native libs per
+   platform, hardware acceleration enabled. Verify playback of:
+   MP4, MKV, AVI, MOV, WebM, TS. Streaming — never full-load a file.
+2. Player UI per ui_rules §9.9: letterboxed black canvas, auto-hiding
+   controls (3s), seekbar with buffered track + drag time bubble,
+   speed menu 0.25x–4x, ±10s skips, loop, aspect toggle.
+3. Gestures (exact spec §9.9/§11): horizontal seek with delta bubble,
+   left-third brightness, right-third volume, double-tap L/R ±10s
+   with ripple, double-tap center play/pause. 8dp slop guard.
+4. Subtitles: auto-load sibling .srt/.ass (same basename), manual
+   load picker, styling sheet (size slider, 4 color swatches, bg
+   opacity) with live preview — all persisted.
+5. Multi-track: audio track + video quality selectors when streams
+   exist (MKV test file).
+6. Background audio: audio continues when backgrounded; media
+   notification with play/pause; return-to-app restores surface.
+4B — AUDIO (second build):
+7. Audio screen per ui_rules §9.10: artwork tile (embedded art or
+   fallback icon), title/artist from metadata, seekbar, speed, loop.
+   Formats: MP3, FLAC, WAV, AAC, OGG, M4A, OPUS.
+8. Mini-player bar above bottom nav when playing + user navigates
+   Home; tap returns to player; X stops and removes it.
+
+### OUT OF SCOPE
+Playlists, media library browsing, PiP (v1.1), online subtitles
+(FORBIDDEN — anti-goal §8).
+
+### ACCEPTANCE CRITERIA
+- [ ] All 6 video formats play; seeking instant on local MP4;
+      first frame ≤1s (1080p MP4)
+- [ ] All 4 gesture types work with correct overlays and slop
+- [ ] Sibling subtitle auto-loads; styling applies live and persists
+- [ ] MKV dual-audio: track switch works and is audible
+- [ ] Screen off / app backgrounded → audio continues; notification
+      controls work
+- [ ] All audio formats play; embedded art shows; mini-player
+      behaves per spec
+- [ ] Corrupt video file → error state, no crash
+- [ ] 2GB video: no memory spike (streams), scrubbing works
+- [ ] Airplane mode: all works; analyze 0 issues
+
+### COMPLETION PROTOCOL
+Analyze + test + build after EACH sub-step (4A, 4B). Update
+PHASE_LOG.md with media_kit setup notes. Print checklist, STOP.
+
+---
+
+## ============================================================================
+## PHASE 5 — ARCHIVES & HTML
+## Objective: ZIP/TAR/GZ browsing + extraction, and offline-safe HTML
+## rendering. This phase contains the app's most security-sensitive
+## code — the network-blocking WebView.
+## ============================================================================
+
+### READ FIRST
+rules.txt §3.3, §5.6, §5.7, §8 (security — read twice);
+ui_rules.txt §9.11, §9.12; goals.txt §4 (T1/T2).
+
+### BUILD
+1. Archive viewer per rules §5.6 + ui_rules §9.11:
+   - Navigable list with breadcrumb bar; folder/file icons by inner
+     extension; sizes shown as "2.1 MB → 800 KB"
+   - Tap entry → extract to temp cache → open in existing viewer,
+     back returns to archive at same position; >50MB entry warning
+   - Extract-all: SAF folder picker, ISOLATE-based extraction with
+     determinate progress dialog (%, current file, Cancel), success
+     snackbar; ZIP-SLIP protection (validate every entry path,
+     reject traversal — unit test this with malicious archive)
+   - Multi-select mode (long-press) with partial extract
+   - TAR, GZ, TGZ handled; encrypted ZIP → clear unsupported message
+2. HTML viewer per rules §5.7 + ui_rules §9.12:
+   - webview_flutter rendering local file; inject CSP meta
+     (default-src 'none') BEFORE load; also intercept and deny all
+     external requests at the WebViewClient level (belt AND braces)
+   - JS off by default; bottom notice chip "JavaScript off — enable?"
+     (session-only enable); even enabled stays network-blocked
+   - Relative sibling assets (css/js/img in same folder) served via
+     guarded in-app handler — path-traversal tested
+   - Rendered ↔ Source toggle (crossfade) with HTML highlighting
+3. Archive unit tests: listing, nested paths, zip-slip rejection,
+   extraction cancellation mid-stream (partial state cleaned).
+
+### OUT OF SCOPE
+RAR/7z (v1.2). Creating archives. Editing extracted files.
+
+### ACCEPTANCE CRITERIA
+- [ ] ZIP with 200+ nested entries lists instantly, breadcrumb
+      navigation smooth
+- [ ] Preview a .txt and a .jpg from inside a zip → correct viewer,
+      back preserves position
+- [ ] Extract-all with progress + cancel works; cancel leaves no
+      partial files
+- [ ] Zip-slip test archive (paths like ../../evil.txt) → REJECTED,
+      logged, no files written outside target
+- [ ] HTML page with external <img src="https://..."> → image shows
+      broken placeholder, NO network request (verify: airplane mode
+      makes zero difference; optionally verify via device log that
+      shouldInterceptRequest denies)
+- [ ] HTML with sibling local CSS → styles apply in rendered mode
+- [ ] Source toggle shows highlighted HTML
+- [ ] Corrupt/truncated zip → error state, no crash
+- [ ] Airplane mode: all works; analyze 0 issues; tests green
+
+### COMPLETION PROTOCOL
+Update PHASE_LOG.md — explicitly document the CSP injection string
+and interception logic used. Print checklist, STOP.
+
+---
+
+## ============================================================================
+## PHASE 6 — FALLBACK CHAIN: HEX VIEWER + OFFICE VIEWERS
+## Objective: Eliminate dead ends forever. Unknown binaries → hex;
+## office docs → best-effort preview. After this phase, NO file can
+## crash or strand the user.
+## ============================================================================
+
+### READ FIRST
+rules.txt §3.2, §3.3, §5.8, §5.9, §9; ui_rules.txt §9.13, §9.14,
+§10.3–10.4; goals.txt §2 (G2).
+
+### BUILD
+1. Hex viewer per rules §5.9 + ui_rules §9.13: virtualized 3-column
+   layout (offset/hex/ASCII), 64KB lazy chunks with infinite scroll,
+   pinned byte ruler, byte-tap tooltip (offset/value/char),
+   jump-to-offset dialog, search (hex pattern + ASCII), alternating
+   row shading, multi-GB safe.
+2. Fallback chain wiring (rules §3.3) — exact order: unknown type →
+   text heuristic (>90% printable first 8KB) → text viewer with
+   banner → else hex → else Unsupported screen. Every Unsupported
+   screen shows info card + [Open as hex] [Open with another app].
+   Unit-test the chain: DOC renamed to .xyz → office detection via
+   ZIP signature + content-types → docx viewer, not hex.
+3. Office best-effort viewers (rules §5.8, ui_rules §9.14):
+   - docx: unzip → parse document.xml → headings/bold/italic text
+     flow, inline images if extractable else placeholder chip;
+     notice banner "Simplified preview"
+   - xlsx: sheet tabs (chips), sticky header/first column, numeric
+     right-align, zebra rows; values only, no formula evaluation
+   - pptx: vertical text-slide cards with slide numbers
+   - legacy .doc/.xls/.ppt: attempt → on failure, extracted-plain-
+     text attempt → else graceful unsupported with banner
+   - HARD RULE: never crash, never raw-XML-dump. 20 corrupt/mutated
+     office fixtures must all land in a defined state.
+4. Error-handling hardening pass (rules §9): global error handler →
+   in-app error screen; OOM guards on every viewer; verify every
+   viewer implements all 4 states (loading/empty/error/content).
+
+### ACCEPTANCE CRITERIA
+- [ ] Random binary (.bin of /dev/urandom) → hex view renders
+      smoothly to 1M+ rows scrolled
+- [ ] Hex search finds both ASCII and hex patterns; jump works
+- [ ] Text heuristic: JSON renamed .xyz opens as text with banner
+- [ ] Real .docx/.xlsx/.pptx render per spec with banner
+- [ ] All 20 corruption fixtures: defined state each, zero crashes
+- [ ] Unsupported screen offers all 3 escape actions; each works
+- [ ] flutter test: chain tests + zip-slip + office fixtures green
+
+### COMPLETION PROTOCOL
+Update PHASE_LOG.md. Print checklist, STOP.
+
+---
+
+## ============================================================================
+## PHASE 7 — SYSTEM INTEGRATION, POLISH & RELEASE
+## Objective: Make it a real Android citizen ("Open with" everywhere),
+## pass full QA, and produce the release APK. Ends with a shippable app.
+## ============================================================================
+
+### READ FIRST
+rules.txt §4.5 (entry points), §6.3, §10–§13, §15, §16; ui_rules.txt
+§7 (motion), §12, §13; goals.txt §6 (anti-goals), §9; ALL prior
+PHASE_LOG.md entries.
+
+### BUILD
+1. Intent filters (rules §4.5): register VIEW for MIME types
+   (application/pdf, text/*, image/*, video/*, audio/*,
+   application/zip, application/json) + file-extension patterns for
+   the Tier 1 list. Content URI handling: copy-to-cache path for
+   path-requiring viewers, direct-stream for media. Test from: Files
+   app, WhatsApp attachment, Chrome download, Gmail attachment.
+2. Recents integration: "Open with" opens update recents identically
+   to picker opens.
+3. Accessibility pass (rules §10, ui_rules §13): every icon labeled,
+   focus order audited screen-by-screen, TalkBack walkthrough of all
+   core flows (open PDF → seek video → find in code → extract zip).
+4. Motion pass: verify exact durations/curves from ui_rules §7;
+   page-push rise animation on viewer entry; reduce-motion respect.
+5. Performance pass (rules §7 budgets): profile cold start, PDF open,
+   media start; fix jank; verify isolate usage on all >1MB ops.
+6. L10n audit: zero hardcoded strings; all through arb files.
+7. Release build (rules §13): shrink+minify with ProGuard keeps for
+   media_kit/webview, per-ABI splits, adaptive icon (monochrome
+   layer), version 1.0.0. Verify NO INTERNET permission in merged
+   manifest of release APK (apkanalyzer) — BUILD FAILS if present.
+8. Final offline verification (rules §16 Definition of Done):
+   full Tier-1 matrix in airplane mode on device; run the entire
+   checklist.
+9. Generate README.md: what it is, privacy promise, build
+   instructions, format support table.
+
+### ACCEPTANCE CRITERIA (= rules.txt §16 Definition of Done)
+- [ ] Opens from picker AND all 4 external sources in airplane mode
+- [ ] Release manifest: zero INTERNET permission (verified by tool)
+- [ ] Full Tier 1 matrix passes on-device, airplane mode
+- [ ] All unit/widget/golden tests green; goldens for both themes
+- [ ] 2GB-RAM device: 100MB PDF, 2GB video, 50MB text — no crash
+- [ ] TalkBack completes all core flows, zero unlabeled controls
+- [ ] arm64 release APK < 50MB
+- [ ] Zero TODO/FIXME in Tier 1 code paths
+- [ ] PHASE_LOG.md final entry: complete build summary
+
+### COMPLETION PROTOCOL
+Produce the signed/debug release APK path, the final PHASE_LOG.md
+entry, README.md, and the completed DoD checklist. STOP. The app is
+now USABLE and SHIPPABLE.
+
+---
+
+## POST-RELEASE (not phases — separate prompts later)
+- v1.1 items live in goals.txt Phase 2 list (PiP, PDF search,
+  password ZIPs, local-only error log viewer).
+- Gather Play Store / F-Droid feedback → re-run Decision Filter
+  (goals.txt §9) on every request before touching code.

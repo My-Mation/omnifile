@@ -1,0 +1,402 @@
+============================================================================
+PROJECT: OpenFile - Universal Offline File Viewer
+FILE: ui_rules.txt (UI/UX DESIGN SPECIFICATION)
+VERSION: 1.0.0
+COMPANION TO: rules.txt (read both — this file governs ALL visual &
+interaction design; rules.txt governs architecture & behavior)
+============================================================================
+1. DESIGN PHILOSOPHY
+1.1 Core UI Principles (in priority order — when in doubt, the higher
+number wins)
+
+Invisible Chrome: The file IS the interface. Chrome (app bars, controls) must be minimal, dark-friendly, and disappear when not needed (fullscreen modes). When viewing content, the user should forget an app exists around it.
+Instant Recognition: A user must identify a file's type in the recents list within 100ms — icons are the primary signal, always type-colored.
+Thumb-First: All controls in the lower 40% of the screen where possible. Media controls, bottom sheets, and FABs follow this. One-handed use is the default assumption.
+Calm, Not Boring: Monochrome surfaces with ONE accent color (teal). Depth comes from elevation and typography, never from color noise. No decorative elements that don't communicate state or action.
+No Surprises: Every destructive action confirms. Every tap gives feedback within 50ms (ripple/haptic). Nothing moves unless the user caused it or it communicates loading progress.
+Density When It Matters: File lists, archive contents, and hex views are information-dense. Settings and dialogs are comfortable. Match density to the task.
+1.2 Anti-Patterns (STRICTLY FORBIDDEN)
+Onboarding carousels, "welcome" screens, or tutorial overlays
+Rating prompts anywhere in the UI
+Banners, upsells, "go premium" hints (app is 100% free forever)
+Colored large headers or gradient backgrounds on functional screens
+Bottom navigation with more than 3 items
+Hamburger menus for primary navigation (only 3 screens exist — use bottom bar)
+Toasts for critical errors (use dialogs) or for success (use snackbar, max 1 visible)
+Custom cursor/pointer effects on touch surfaces
+Any animation longer than 400ms for state transitions
+Drop shadows on flat surfaces inside viewers (content areas must be flat)
+2. COLOR SYSTEM
+2.1 Theme Modes
+Three modes: LIGHT, DARK, SYSTEM (system is the default on first run)
+Persist user choice. Changing theme = 250ms animated color transition (no flash of wrong theme; preload both ThemeData).
+2.2 Dark Theme Tokens (DEFAULT for viewing — use pure black in
+viewer content areas for OLED battery savings)
+
+Name	Hex	Usage
+surface.root	#000000	Viewer content backgrounds (OLED black)
+surface.app	#121212	Home/Settings/About backgrounds
+surface.card	#1E1E1E	Cards, list tiles, sheets
+surface.cardHover	#252525	Pressed/hover card state
+surface.elevated	#2A2A2A	Dialogs, dropdowns, menus
+surface.input	#1A1A1A	Text fields, search bars
+divider	#2E2E2E	1dp dividers, list separators
+text.primary	#E8E8E8	Primary text (never pure white #FFF —
+                  |           | reduces glare on OLED)
+text.secondary | #A0A0A0 | Metadata, subtitles, timestampstext.disabled | #5C5C5C | Disabled states, placeholdersaccent.primary | #00BFA5 | Primary actions, selected states, FABaccent.primaryDim | #00897B | Pressed accent stateaccent.onAccent | #00332C | Text/icons ON accent colorstate.error | #CF6679 | Errors, destructive text (dark)state.errorContainer | #3A1E23 | Error banner backgroundstate.warning | #FFB74D | Warnings ("large file" notices)state.warningContainer| #33270E | Warning banner backgroundstate.success | #81C784 | Success snackbars (rare — extraction done)overlay.scrim | #000000 | at 60% opacity for dialogsoverlay.controls | #000000 | at 55% opacity behind video controlsoverlay.fullscreen | #000000 | at 85% opacity for zoom previews
+
+2.3 Light Theme Tokens
+Name	Hex	Usage
+surface.root	#FAFAFA	App + viewer backgrounds
+surface.app	#FAFAFA	Home/Settings/About backgrounds
+surface.card	#FFFFFF	Cards, list tiles
+surface.cardHover	#F0F0F0	Pressed/hover state
+surface.elevated	#FFFFFF	Dialogs, menus (elevation shadow
+                  |           | distinguishes them)
+surface.input | #F2F2F2 | Text fields, search barsdivider | #E0E0E0 | Dividerstext.primary | #1C1C1C | Primary texttext.secondary | #6B6B6B | Metadata, subtitlestext.disabled | #B3B3B3 | Disabled, placeholdersaccent.primary | #00897B | Slightly darker teal for AA contrast | | on whiteaccent.primaryDim | #00695C | Pressed stateaccent.onAccent | #FFFFFF | Text/icons on accentstate.error | #B3261E | Errorsstate.errorContainer | #F9DEDC | Error banner backgroundstate.warning | #E65100 | Warning textstate.warningContainer| #FFF3E0 | Warning banner backgroundstate.success | #2E7D32 | Successoverlay.scrim | #000000 | 40% opacity
+
+2.4 File-Type Semantic Colors (used ONLY for file type icons in
+lists — never for UI chrome)
+
+Type	Dark	Light
+PDF	#EF5350	#C62828
+Document (docx etc.)	#42A5F5	#1565C0
+Spreadsheet	#66BB6A	#2E7D32
+Presentation	#FFA726	#EF6C00
+Code	#26C6DA	#00838F
+Text	#B0BEC5	#546E7A
+Markdown	#7E57C2	#4527A0
+Archive	#FFB74D	#B26A00
+Image	#EC407A	#AD1457
+Video	#7E57C2	#512DA8
+Audio	#FF7043	#D84315
+HTML	#EF5350	#C62828
+Unknown/Binary	#78909C	#607D8B
+Rules:
+
+Icon containers: colored icon at 26dp on transparent bg (NO colored circles/containers — this is not a Gmail clone)
+These colors NEVER appear in buttons, headers, or navigation
+3. TYPOGRAPHY
+3.1 Font Stack
+UI Font: Platform default (Roboto on Android — do NOT bundle a custom UI font; keep APK small)
+Code/Text Viewer Font (user-selectable in Settings, persisted):
+JetBrains Mono (DEFAULT) — bundle Regular + Medium as assets
+Fira Code — bundle Regular + Medium as assets
+System Monospace — fallback option
+Font loading: preloaded in isolation at app start, cache in memory
+3.2 Type Scale (all sizes in sp — respect system font scale up to
+1.3x, then cap; ALL weights use w400/w500 only — no bold-heavy designs)
+
+Style	Size	Weight	Line Height	Letter Spacing	Usage
+displaySmall	32sp	w400	40sp	-0.25	Empty state headlines
+headlineSmall	24sp	w400	32sp	0	Dialog titles
+titleLarge	20sp	w500	28sp	0	AppBar titles (Home, Settings)
+titleMedium	16sp	w500	24sp	0.15	File names in lists, list section headers
+bodyLarge	16sp	w400	24sp	0.5	Primary body text, dialog content
+bodyMedium	14sp	w400	20sp	0.25	List subtitles, metadata, settings descriptions
+bodySmall	12sp	w400	16sp	0.4	Timestamps, file sizes, badges, page indicator
+labelLarge	14sp	w500	20sp	0.1	Buttons, tabs, chips
+codeBody	user	w400	1.5x size	0	Text/code viewer content (default 14sp,
+             |      |        |             |                | range 10–28sp, persisted)
+3.3 Text Rules
+File names: MIDDLE TRUNCATION always (e.g., "myVeryLongFileName….pdf") in app bars; ellipsis-end in list tiles
+Numbers (sizes, counts): use compact formatting — "1.2 MB" not "1258291 bytes"; "3 days ago" not full dates in lists (full date on tap via info dialog)
+NEVER use ALL CAPS for anything except nothing. No caps. Not even buttons (Material 3 default is sentence case — keep it)
+Min contrast: text.primary on any surface ≥ 7:1; text.secondary ≥ 4.5:1
+4. SPACING, GRID & LAYOUT
+4.1 Base Grid
+Unit: 4dp. All spacing values MUST be multiples of 4: 4, 8, 12, 16, 20, 24, 32, 40, 48
+Screen horizontal padding: 16dp (lists), 24dp (dialogs), 20dp (settings groups)
+List item vertical padding: 12dp top/bottom (total tile height 72dp for two-line items)
+Dialog content padding: 24dp all sides; 24dp between title and body; 8dp min between actions
+4.2 Touch Targets
+Absolute minimum: 48x48dp for ALL interactive elements — including icon buttons, video player controls, hex viewer rows
+Spacing between adjacent touch targets: ≥ 8dp
+Video player controls: 56dp hit areas with 40dp visual icons (hit area > visual)
+4.3 Responsive Breakpoints
+Width	Behavior
+< 600dp	Phone: single column, standard layouts
+600–839dp	Small tablet/foldable: Home recents becomes 2-column
+           | grid; viewers center content with max-width 720dp            | and side gutters
+≥ 840dp | Tablet/desktop: Home becomes 2-pane (recents left | 40%, preview hints right); dialogs max-width 560dp; | video player letterboxes with floating controls
+
+4.4 Safe Areas
+Respect ALL system insets (gesture nav bars, cutouts) via SafeArea
+Video fullscreen: extend into system bars, controls padded by inset + 8dp
+Never let tappable content sit within 24dp of a screen edge vertically
+5. SHAPE, ELEVATION & BORDERS
+Element	Shape	Elevation (dark)	Border
+Cards (recents)	12dp radius all corners	0	1dp divider color stroke
+Dialogs	28dp radius (M3 default)	3	none
+Bottom sheets	28dp top corners only	1 + drag handle	none
+Menus/dropdowns	12dp radius	2	none
+Buttons filled	Full pill (100dp radius)	0	none
+Buttons outlined	Full pill	0	1dp accent stroke
+Text fields	12dp top corners (M3)	0	outline per M3
+Search bar	Full pill	0	surface.input fill
+Chips (filters)	8dp radius	0	1dp stroke
+Snackbars	8dp radius	3	none
+FAB	16dp radius (M3 large)	3	none
+Viewer fullscreen	0dp (content is edge-	—	none
+             | to-edge)                 |                   |
+Rules:
+
+NEVER stack elevation shadows inside viewer content (flat by default)
+Dividers over shadows for separating list sections
+Borders (1dp, divider color) only on cards in LIGHT theme; dark theme cards get subtle surface contrast instead
+6. ICONOGRAPHY
+Icon set: Material Symbols Rounded (match Material 3 shapes), outline weight for default, filled for selected/active states
+Sizes: 24dp (app bars, list leading), 20dp (inline with text, buttons), 18dp (dense lists, chips), 48–96dp (empty states)
+Every icon button MUST have a semantic label (tooltip + Semantics)
+File-type icons in lists: use the semantic colors from 2.4, outlined style, with a small file-fold corner motif — implement ONE custom painter class that wraps any Material icon in a file shape (top-right folded corner), 40dp total
+7. MOTION SYSTEM
+7.1 Durations & Curves
+Use exactly these; no custom curves elsewhere:
+
+Purpose	Duration	Curve
+Widget enter (fade+slide)	200ms	easeOutCubic
+Widget exit (fade)	150ms	easeIn
+Page push (viewer opens)	250ms	easeOutCubic (slide up 24dp +
+                       |          | fade — do NOT use default                        |          | horizontal slide; files "rise"                        |          | into view)
+Page pop | 200ms | easeInDialog in | 200ms | emphasized (M3 default)Dialog out | 150ms | easeInBottom sheet drag | physics | — (direct manipulation)Theme switch | 250ms | linear color lerpControl overlay show/hide | 200ms | easeOutCubic / easeInRipple | default | Material defaultFAB morph → file picker | 300ms | emphasized
+
+7.2 Motion Rules
+Nothing animates on first frame of a screen (no entrance cascades in viewers — content appears immediately; only Home list may stagger at 30ms/item, max 8 items)
+Loading states: indeterminate circular progress, 3dp stroke, accent color. NEVER block viewer content behind a full-screen loader — show loader in the app bar area + a centered 48dp indicator that disappears the instant first content renders
+All animations interruptible mid-flight (no locked animations)
+Reduce-motion: respect MediaQuery.disableAnimations — replace with opacity-only 100ms
+8. GLOBAL COMPONENTS (exact specs)
+8.1 App Bar (standard screens)
+Height 64dp, surface.app background, NO elevation/shadow (borderless; separation via content offset)
+Title: titleLarge, left-aligned after 8dp from back button
+Back button: 48dp hit, arrow_back icon
+Overflow: three-dot icon; menu opens as anchored dropdown (not fullscreen)
+In viewers: transparent over content, auto-hides on scroll-down, reveals on scroll-up (only in scrollable viewers — PDF/text/archive)
+8.2 Buttons
+Filled (primary):
+
+Height 56dp (large/hero), 40dp (compact); full-pill shape
+accent.primary bg, accent.onAccent text, labelLarge
+Pressed: accent.primaryDim + scale 0.98 (100ms)
+Hero "Open File" button on Home: 56dp height, full available width minus 32dp margins, folder_open icon + label, placed 32dp below taglineOutlined (secondary):
+Same metrics, transparent bg, 1dp accent border, accent textText buttons: 40dp height, accent text, 12dp horizontal paddingIcon buttons: 48x48dp hit, 24dp iconDISABLED state: text.disabled content, surface.input bg (filled), no border (outlined), zero interaction
+8.3 List Tiles (recents, archive contents, settings)
+Two-line tile (recents):
+
+Height 72dp; leading: 40dp file-type icon; title (titleMedium, 1 line ellipsis-middle) + subtitle (bodyMedium text.secondary: "1.2 MB · 3 days ago")
+Trailing: 40dp more-vert icon button (opens sheet: Remove from recents / File info / Share)
+Ripple: standard Material, full-bleed
+Swipe left on tile: reveals red trash zone (state.error bg, delete icon white, 80dp wide); full swipe removes with snackbar + UNDO (5s); swipe requires 56dp drag to trigger visual, 120dp to commitThree-line tile (archive entries with extra info): 88dp height
+8.4 Dialogs
+Max width 560dp, 24dp padding, headlineSmall title, bodyLarge body, actions right-aligned, gap 8dp
+Confirmation dialogs: destructive action = filled button with state.error bg (NOT accent); cancel = text button
+File info dialog: custom 2-column key-value layout — keys bodyMedium text.secondary right-aligned 100dp column, values bodyMedium text.primary, 8dp row spacing, SHA-256 shows first 16 chars + copy icon
+NEVER stack dialogs; queue if needed
+8.5 Bottom Sheets
+Drag handle: 32x4dp, divider color, 8dp from top, centered
+Rounded 28dp top corners, surface.card bg
+Item rows: 56dp height, leading 24dp icon, bodyLarge label, full-bleed ripple
+Used for: recents item menu, share sheet wrapper, subtitle options, playback speed picker (radio list), encoding picker (radio list)
+Back gesture/scrim tap dismisses; 200ms fade scrim + slide sheet
+8.6 Snackbars
+surface.elevated bg, text.primary content, 8dp radius, floating (16dp margin), max 1 at a time
+Action button (e.g., UNDO): accent color, labelLarge
+Duration: 4s (with action), 3s (without)
+Usage: ONLY for reversible confirmations (removed recent, cleared cache, copied text). Never errors.
+8.7 Search Bar (in-viewer find)
+Slides down from under app bar, 48dp height, surface.input bg, full-pill, magnifier icon leading, clear button trailing
+Result count chip right of field: "3/17" bodySmall in surface.elevated pill
+Prev/next chevron icon buttons 40dp trailing
+All matches highlighted inline: accent.primary at 25% opacity bg; current match: accent.primary at 60%
+Opens with Ctrl+F equivalent (menu item "Find in file"); closes with back or X
+8.8 Progress Indicators
+File open (viewer): centered 48dp circular, below it bodySmall "Opening 12.3 MB…" — appears only if operation >300ms (delay intentional)
+Archive extraction: linear progress under a dialog — 4dp height, accent, determinate with % + current filename in bodySmall, Cancel button
+NEVER skeleton screens (files either load fast or show spinner)
+9. SCREEN-BY-SCREEN SPECS
+9.1 Splash (cold start only, auto-dismisses when Home ready)
+surface.root bg (pure black in dark — no logo flash possible)
+Center: app logo 72dp — document outline with folded corner + eye motif, accent.primary stroke, 2dp stroke weight
+Below 16dp: "OpenFile" titleLarge
+NO animation delay: if Home is ready in <400ms, skip splash entirely (target behavior)
+9.2 HOME
+Layout (top to bottom, scrollable):
+
+Header block (part of scroll, not pinned): 32dp top inset
+"OpenFile" displaySmall text.primary (wordmark, no logo icon — keep it typographic)
+4dp gap: "Any file. Any format. Zero internet." bodyMedium text.secondary
+24dp gap
+Hero Open button (spec 8.2) — horizontal 16dp margins
+32dp gap + "Recent files" titleMedium + (if >0) trailing "Clear all" text button (state.error color, 40dp height)
+8dp gap, then recents list (spec 8.3)
+Bottom padding 96dp (above nav bar)
+Empty state (no recents):
+
+Centered vertically at 40% screen height: 96dp illustration — outlined file icons (5 types) fanned in an arc, text.disabled stroke
+16dp gap: "No recent files" titleMedium
+4dp gap: "Open something to get started" bodyMedium text.secondary
+The hero button above is the only CTA (do NOT duplicate it here)
+Bottom navigation bar (3 items, NavigationBar M3):
+
+Home (home_outlined/home), Settings (settings_outlined/settings), About (info_outline/info)
+80dp height, surface.app bg, selected = accent.primary icon + labelLarge label
+NO haptic on tab switch, NO badge counts
+9.3 SETTINGS
+Grouped list, 16dp horizontal padding, groups separated by 24dp + divider:
+
+Group "Appearance":
+Theme: single-line tile → bottom sheet radio list (System/Light/Dark), current shown as subtitle, leading brightness icon
+Code font: tile → sheet radio (JetBrains Mono/Fira Code/System) with each option rendered IN that font as preview
+Default text size: tile showing current "14sp" → sheet with slider 10–28sp + live preview line of code text
+Group "Viewer":
+Word wrap default (switch tile, subtitle "Applies to new text files", default ON for .txt, OFF for code — this stores override)
+Auto-load subtitles (switch, default ON)
+Remember playback position (switch, default ON)
+Group "Storage":
+Clear recent files (tile, error-colored title) → confirm dialog
+Clear cache (tile) → shows current size as subtitle → confirm dialog → success snackbar
+Group "Privacy" (collapsed by default, expandable):
+Static bodyMedium text: "OpenFile has no internet permission. Your files never leave this device. No analytics, no ads, no tracking. Verified — view the source anytime." (no tappable links; offline app)Switch tiles: M3 switch, accent track when on, 72dp height
+9.4 ABOUT
+Centered column, 32dp top padding: logo 72dp, name titleLarge, version bodySmall text.secondary "1.0.0"
+"Open-source licenses" list tile → standard showLicensePage
+Tagline at bottom: bodySmall text.disabled "Built for the love of files. Free forever."
+9.5 COMMON VIEWER SHELL (applies inside every viewer)
+Content area: surface.root, edge-to-edge, flat
+AppBar: transparent bg overlaying content on scrollable viewers; solid surface.app on non-scrolling viewers (image/video in fit mode)
+Banner slots (48dp, full-width, below app bar when present):
+Warning banner: warningContainer bg, warning icon 20dp, bodyMedium text, e.g., "Large file — 340 MB. Loaded first 1 MB."
+"Load more" text button inline
+Notice banner: surface.elevated bg, "Simplified preview — layout may differ" (office viewers)
+Fullscreen toggle: double-tap anywhere on content → app bar + system UI hide, 200ms fade; peek from top edge (16dp drag zone) or back button restores. Status bar text auto light/dark per theme.
+9.6 PDF VIEWER
+Page canvas: pageGap 8dp vertical between pages (continuous mode default), page background pure white ALWAYS (regardless of theme — PDFs are white paper; surround stays surface.root)
+Scrollbar: right-edge thumb, 4dp wide, text.disabled at 50%, appears on scroll (fade after 800ms idle), draggable, shows "12 / 240" bubble while dragging
+Bottom-center floating page pill (auto-hides with scroll): surface.elevated, 32dp height pill, bodySmall "12 / 240", tap → jump-to-page number field dialog
+Zoom: native pinch 1x–5x, double-tap toggles 1x↔2.5x zoomed at tap point
+Password: modal dialog, obscured field, "This PDF is protected" headlineSmall, error shake animation (4dp x 3, 300ms) on wrong password + inline error text
+9.7 TEXT / CODE VIEWER
+Gutter: 56dp fixed right-aligned line numbers, bodySmall, text.disabled, current-line number = text.secondary; gutter bg = surface.root (seamless, NO divider between gutter and code)
+Current line highlight: full-width, accent.primary at 8% opacity
+Selection: standard M3 (accent 25%)
+Long-press word → selection handles + standard toolbar (copy/share/select all — read-only)
+Word wrap OFF: horizontal scroll with sticky "→" edge indicator (4dp accent strip on right edge when content overflows)
+Find bar per spec 8.7
+Font size: pinch anywhere adjusts codeBody size live (10–28sp, 2sp steps, haptic tick each step, persists globally); or via menu +/- buttons
+Encoding menu: bottom sheet radio list, current auto-detected preselected, switching reloads instantly
+Markdown toggle: app bar icon (visibility/visibility_off) switches Rendered ↔ Source with 200ms crossfade; Rendered mode uses bodyLarge for text, proper heading scale (h1=displaySmall…h6=titleMedium), code blocks in code font on surface.card with 8dp radius
+9.8 IMAGE VIEWER
+Fit mode default: image centered, contain, background surface.root
+Zoom: pinch 0.5x–8x, pan clamped with rubber-band edges (resistance 0.5); double-tap cycles 1x → 2.5x (at point) → 1x
+2x zoom: optional pixelated rendering toggle in app bar menu (NearestNeighbor), persisted
+Rotate button in app bar: 90° steps, 250ms animated rotation, persists per session only
+GIF/WebP: play automatically, no controls; long-press → pause overlay with play icon
+EXIF panel: bottom sheet on info tap — grid of key/values (Dimensions, Camera, ISO, f-stop, Exposure, Date, GPS coords displayed as "12.97° N, 77.59° E" + "Open in maps" is FORBIDDEN — no internet. Show coords as copyable text only)
+9.9 VIDEO PLAYER
+Layout: black (#000000 ALWAYS, both themes) letterboxed canvas, video centered containControls overlay (auto-hide after 3s no-touch, tap canvas toggles):
+
+Scrim: overlay.controls gradient — bottom 40% only, top 20% (protects app bar & controls readability)
+Top row: app bar area = back button + filename (truncated) + overflow
+Center: (video only) none — gesture-driven
+Bottom stack (16dp side padding, 12dp gaps):
+Seekbar: full width, 4dp track, accent played, surface.elevated buffered (30% white), thumb 12dp circle (24dp hit, appears larger while dragging + time bubble above: surface.elevated pill, bodySmall, position preview while scrubbing)
+Time row: "12:34" left, "1:23:45" right, bodySmall, onAccent-ish white
+Control row: [play/pause 56dp] [rewind10 48] [forward10 48] spacer [speed pill "1x" 40dp→sheet] [audio/menu icon 48 if multi-track]
+Gestures (video canvas):
+Horizontal drag: seek ±(drag distance × 0.5s/dp), center overlay bubble "▲ 1:23:45 → 1:24:10" with delta color (state.success forward / state.error back)
+Left-third vertical drag: brightness — center-left overlay vertical pill indicator (sun icon + fill)
+Right-third vertical drag: volume — same UI (volume icon)
+Double-tap left/right: ±10s with ripple circle at tap point
+Double-tap center: play/pause
+Subtitles: rendered by media_kit at bottom 12% area, font user-configurable via sheet: size slider (12–40sp), 4 color swatches (white/yellow/cyan/rose), background opacity slider, instant preview in sheet footer
+Buffering: center 48dp spinner (only when >500ms stall)
+PiP: system button in app bar if Android 8+ (defer body per rules.txt v1 scope)
+9.10 AUDIO PLAYER
+Layout (no video): centered column on surface.root —
+
+Artwork: 240dp square, 16dp radius, surface.card bg, album art or music-note fallback icon 96dp text.disabled; 32dp top margin
+24dp gap: title titleLarge (2-line max, ellipsis), 4dp, artist/album bodyMedium text.secondary
+32dp gap: seekbar (same spec as video, non-scrub bubble variant)
+Time row: elapsed / total, bodySmall
+24dp gap: controls row centered — [rewind10 56dp] [play/pause 72dp circle filled accent, onAccent icon 36dp] [forward10 56dp]
+16dp: secondary row — speed pill, loop toggle icon (accent when on), subtitle/load icon (for audio with lyric/subtitle files — rare)
+Mini state: if user navigates Home while playing, persistent mini-bar appears above bottom nav (64dp, surface.card): tiny art 40dp, title (1 line), play/pause 40dp, X to stop. Tap mini-bar → back to player.
+Background playback: media notification with standard controls (media_kit handles); notification uses app icon, no custom big picture
+9.11 ARCHIVE VIEWER
+Breadcrumb bar (below app bar, 40dp, horizontal scrollable): "root › docs › 2024" — segments bodyMedium, current text.primary, ancestors text.secondary, "/" separators
+Entry list (tile spec 8.3, three-line where useful):
+Leading: folder icon (text.secondary) or 40dp file-type icon by inner extension
+Title: entry name; Subtitle: for files "2.1 MB → 800 KB" (unpacked → packed), folders: "12 items"
+Tap file → preview in-place: pushes appropriate viewer over archive (back returns to archive at same scroll position), with 48dp warning banner if entry >50MB ("Will load entire file to preview")
+Extract-all: app bar download icon → SAF folder picker → determinate progress dialog (spec 8.8) → success snackbar with "Show in files" action (opens SAF)
+Per-entry extract: entry long-press → multi-select mode (checklist UI, top bar shows "3 selected", actions: extract, cancel) — single-entry quick extract via overflow sheet
+9.12 HTML VIEWER
+Rendered mode: WebView edge-to-edge, background white ALWAYS (like PDF — pages are paper)
+App bar toggle: code icon ↔ render icon (200ms crossfade)
+Source mode: code viewer with html highlighting
+JS disabled state: first render shows 24dp notice chip bottom-center: surface.elevated pill "JavaScript off — enable?" tap → enables for this file session; chip auto-dismisses in 5s if ignored
+All network requests silently blocked (per rules.txt — NO error toasts for blocked requests; broken-image placeholders are acceptable visual feedback)
+9.13 HEX VIEWER
+Monospace (code font), bodySmall default 12sp
+Row layout: offset (8 hex chars, accent.primaryDim) | 2dp gap | 16 bytes as hex pairs (2-char groups, 2dp gaps) | 2dp | ASCII gutter (dots for non-printable)
+Row height 32dp, alternating row bg: surface.root / surface.card (4% opacity)
+Byte tap: highlights byte (accent 40% bg) + anchored tooltip panel (top, non-blocking): "Offset 0x0000A4F2 · 0x89 (137) · '‰'" — auto dismiss 4s or on scroll
+Jump-to-offset: menu → dialog with hex input field (0x prefix optional) + go
+Find: ASCII string or hex pattern; matches highlighted state.warning 40%, current match state.warning 80%
+Loads 64KB chunks; end-of-loaded-area shows inline "Loading…" row, then continues — infinite scroll downward
+Header ruler row (pinned): byte-position ruler 00–0F, bodySmall text.disabled, sticky
+9.14 OFFICE VIEWERS (docx/xlsx/pptx — best effort per rules.txt)
+docx: RichText flow, heading scale per markdown spec, bold/italic preserved, images shown inline if extractable (else 24dp placeholder chip "image"), page-width constraint 600dp max, centered
+xlsx: sticky header row + sticky first column, data grid, cell padding 12x8dp, right-align numbers, zebra rows (surface.card 4%), sheet tabs at top (chips, horizontal scroll) if multi-sheet
+pptx: vertical slide cards (16:9, 12dp radius, surface.card bg, divider gaps) — slide number badge top-right; text content only, title emphasized titleMedium
+ALL office modes show notice banner (spec 9.5)
+10. STATE DESIGNS (every screen/viewer implements all four)
+10.1 Loading
+Per spec 8.8. Viewer content area may show last-known state underneath (if reopening) with 50% opacity.
+
+10.2 Empty
+Recents: spec 9.2
+Archive folder (empty): centered folder-open icon 64dp + "Empty folder" bodyMedium text.secondary
+Search results (0 hits): centered "No matches for 'query'" bodyMedium + result counter chip shows "0/0" in state.error
+10.3 Error (in-viewer, content replaced)
+Centered column: 64dp icon (broken_image variant per context — document for docs, film for video, music_note for audio)
+16dp: "Can't open this file" titleMedium
+8dp: reason bodyMedium text.secondary, humanized:
+Corrupt: "The file appears to be damaged or incomplete."
+Unsupported: "This format isn't supported yet."
+OOM: "File is too large for this device's memory."
+Password: "Password-protected and couldn't be unlocked."
+24dp gap: button row — [Open as text (outlined, only if near-text binary)] [Open with another app (filled)]
+8dp below: "Copy details" text button (bodySmall)
+10.4 Unsupported (Tier 3 fallback screen)
+Same as error layout, but title "Preview not available", buttons: [Open as hex (outlined)] [Open with another app (filled)], plus file info summary card (surface.card, name/type/size/modified) above buttons
+
+11. GESTURE MAP (global summary)
+Surface	Gesture	Action
+Viewer content	Double-tap	Fullscreen toggle (except
+                 |                    | image viewer where it's                  |                    | zoom; media where it's seek)
+Image | Pinch / drag | Zoom / pan (clamped)Image | Double-tap | Zoom cycle 1x→2.5x→1xPDF | Pinch | Native zoom 1–5xText/Code | Pinch | Font size 10–28spVideo | Horizontal drag | Seek ±(px × 0.5s/dp)Video | Left vert drag | BrightnessVideo | Right vert drag | VolumeVideo | Double-tap L/R | ∓10sVideo/Audio canvas | Single tap | Controls toggleList tiles | Swipe left | Delete action (recents)List tiles | Long-press | Multi-select (archive only)Bottom sheet | Drag down >120dp | Dismiss (with velocity | | fling support)App bar | Scroll down | Hide (scrollable viewers)App bar | Scroll up | Reveal
+
+Rules: ALL gestures require 8dp slop to activate (no accidental triggers); gestures NEVER fire while a dialog/sheet is open.
+
+12. RESPONSIVE & DEVICE BEHAVIOR
+Foldables: on unfold, state must survive (all viewers keep position/playback); Home reflows to grid at ≥600dp
+Rotation: video locks to sensor-landscape when entering fullscreen landscape (if user rotated there); portrait viewers reflow only (no state loss)
+Split-screen/free-form: everything must remain functional at minimum 320dp width — test PDF, code, hex at this width
+Keyboard (physical): Ctrl+F opens find in text viewers; Space toggles play/pause in media; arrow keys seek ±5s when player focused; Esc exits fullscreen
+13. ACCESSIBILITY (UI-specific)
+EVERY icon-only control: tooltip + Semantics label ("Play", "Open settings", not "button")
+Live regions: extraction progress announces % every 25%; player position announcements OFF by default (too chatty)
+Focus order: logical top-to-bottom, left-to-right in every screen; dialogs trap focus until dismissed
+TalkBack on video: controls exposed as standard sliders/buttons; custom seekbar implements SemanticsActions with incremental actions (±10s)
+Contrast: ALL text passes AA on its surface per section 3.3; accent teal on black passes for large text/icons only (4.0:1) — body text NEVER uses accent on dark surfaces
+Touch slop and target sizes are NON-NEGOTIABLE (spec 4.2) even when it costs visual density
+14. IMPLEMENTATION NOTES FOR AI
+Build the theme as TWO complete ThemeData objects from the token tables in section 2 — no ad-hoc Colors.xyz anywhere in widget code; ALL colors flow through theme extension (define an OpenFileColors ThemeExtension for the custom tokens: file-type colors, banner containers, overlay opacities)
+Create reusable widgets FIRST: AppTile, OFilledButton, OBottomSheet, OBanner, OSearchBar, ViewerScaffold, OEmptyState, OErrorState — every screen composes these; zero duplicated layout code across viewers
+Widget tests: golden tests for light+dark on Home, Settings, and error state; component tests for tile swipe-to-delete, sheet dismiss thresholds
+If any spec here conflicts with rules.txt: rules.txt wins on behavior/capability, ui_rules.txt wins on appearance/interaction
+When uncertain about a detail not covered here: choose the option with FEWER visual elements, note it in DECISIONS.md
+Usage: Save as ui_rules.txt alongside rules.txt, then feed both to the AI together. Suggested kickoff prompt:
+
+"Read rules.txt and ui_rules.txt fully. They are the complete spec. Follow rules.txt section 15 for implementation order, and apply ui_rules.txt to every screen from the start. Log any decisions you make in DECISIONS.md. Begin with step 1."

@@ -1,0 +1,295 @@
+0. SESSION PROTOCOL (how you must work)
+First action: read ALL spec files + PHASE_LOG.md, then run
+flutter analyze and confirm the current build state. Report what
+exists vs. what these tasks require. Do not skip this audit.
+Work through Tasks 1→6 STRICTLY in order. One task per session.
+After each task: flutter analyze = 0 issues, all tests green,
+debug build succeeds, PHASE_LOG.md updated, then STOP and print
+that task's acceptance checklist. DO NOT start the next task
+without user confirmation ("verified" / "next").
+REALITY RULES (never violate, never overpromise in UI copy):
+"Editing PDF text" = COVER-AND-REPLACE (rect over original +
+new matched text drawn on top). PDF text does not reflow. Ever.
+Font matching = BEST-MATCH estimation (see Task 2 metrics).
+Pixel-perfect font identity is impossible offline; estimate,
+then let the user fine-tune with size/controls.
+PPTX rendering = best-effort faithful rendering of positioned
+elements. Complex charts/SmartArt/table styling render as
+labeled placeholders, not garbage or blank.
+Every save follows the Golden Save Rule (edit_v2.txt §1.1):
+new file via SAF, original never modified — prove with hash
+tests where feasible.
+100% offline, zero INTERNET permission, no telemetry —
+unchanged and absolute. Verify OCR works in airplane mode from
+a fresh install (bundled Latin model).
+If an API you need doesn't exist or a package behaves
+differently than assumed: CHECK the package's pub.dev docs /
+changelog. Never invent APIs. Log deviations in PHASE_LOG.md.
+
+TASK 1 — UNIVERSAL IN-PLACE TEXT EDITING (docs, code, HTML, text)
+Goal: for EVERY text-bearing format, the flow is: open → "Edit"
+button at top bar → tap any text → caret appears → type replacement
+in place. Find-and-replace still available. This must feel like
+editing a note, not filling a form.
+
+Build/fix:
+Viewer shell: add a persistent "Edit" toggle button in the app
+bar (pencil icon, accent when active) for every editable format:
+TXT, MD, CSV, JSON, XML, all code, HTML (source mode), DOCX,
+PPTX (once Task 6), XLSX (once Task 5), PDF (once Task 4).
+Read-only formats keep no button.
+Text/code/CSV/JSON/XML/HTML-source: switching Edit ON makes the
+code field editable (readOnly:false) while KEEPING syntax
+highlighting, gutter, and search live. Tap-to-position caret
+must land exactly where tapped (fix any offset bugs with wrap
+on/off). Find & replace panel gets working Replace / Replace all
+with match highlighting.
+DOCX: tap a paragraph in preview → it becomes an inline editable
+field (or opens focused inline editor bound to that XML node)
+preserving neighboring run styles. New paragraph button inserts
+after current with inherited style. Enter/Backspace inside a
+paragraph splits/merges nodes correctly.
+Dirty tracking: Edit mode + any change → Save enables; leaving
+Edit mode or back triggers discard-confirm dialog (edit_v2 §5.3).
+Unit tests: paragraph split/merge on docx XML; find-replace
+counts; caret position after wrap toggle.
+Acceptance checklist (print when done):
+ Open .py → Edit → tap mid-file → type → highlighting intact
+ Find & replace: replace-all on 10+ matches correct
+ DOCX: tap paragraph 5 → edit text → save → reopen (original
+untouched, new file shows change, other paragraphs byte-identical)
+ HTML source edit works; rendered mode unchanged
+ Edit toggle absent on read-only formats (pdf before Task 4, epub)
+ analyze/tests/build green; PHASE_LOG updated
+
+TASK 2 — SHARED OCR SERVICE (engine for Tasks 3 & 4)
+Goal: one on-device OCR service used by BOTH image editor and PDF
+editor. Detects text blocks with position, estimated font size,
+estimated color — everything downstream needs for font matching.
+
+Build:
+OcrService (domain service, pure Dart interface + ML Kit impl):
+Input: image bytes (from image file OR rendered PDF page raster
+at 150–300dpi, capped 2048px long edge)
+Output model per text LINE: text, bounding box, and computed:
+estimatedFontSize (see metrics below)
+estimatedTextColor + estimatedBackgroundColor (see metrics)
+weight guess (bold/regular via stroke-density heuristic)
+alignment guess (left/center within block)
+Group lines into blocks/paragraphs by line-gap heuristics.
+Font-size estimation: fontSize ≈ bboxHeight × 0.72 (cap-height
+heuristic); refine per-line using digit/uppercase content if
+present. Expose as estimate — user can always adjust after.
+Color estimation: decode region with image package; background
+= median of pixels in 4px border ring around bbox; text color =
+median of pixels inside bbox that differ from background by >
+luminance threshold 40.
+Weight heuristic: ratio of dark-pixel density inside glyph boxes;
+> 0.42 → bold guess.
+Low-confidence handling (blocks <0.5 confidence on >30% of page):
+notice "Script may be unsupported — results may be poor".
+Performance: run in background isolate via ML Kit's native async;
+progress callback ("Reading page 3 of 12…"); cancelable.
+Persistence rule: OCR results live ONLY in session memory unless
+user saves the edited document (privacy anti-goal edit_v2 §8).
+Acceptance checklist:
+ OCR on photo of printed text: lines + boxes correct, sizes
+within ±15% visually, colors plausible
+ Works fully in airplane mode on FRESH install (bundled model)
+ Scanned PDF page (rendered to raster) produces same results
+ Cancel mid-run leaves no state; no crash on blank/noise image
+
+TASK 3 — IMAGE EDITOR: REAL TEXT LAYERS (fixes the reported bug)
+BUG BEING FIXED: added text lands at bottom, immovable, unscaleable.
+This is unacceptable. Implement a proper layer canvas.
+Build:
+Layer model: each text layer = {id, text, offset(dx,dy), scale,
+rotationDeg, style{fontFamily, baseSize, color, bgOpacity,
+bold/italic}}. Image = background layer. Render: InteractiveViewer
+over a Stack — background image + Transform-ed layer widgets.
+NO column-append layouts anywhere.
+Gestures per layer (Canva-style):
+Tap layer → selection: bounding box + 4 corner handles + delete
+button on box corner
+Drag inside box → move (1:1 finger tracking)
+Drag corner handle → scale (uniform, clamped 0.2x–5x of base)
+Two-finger rotate on selected layer (or rotation handle) →
+rotate, snapped to 0/90/180/270 within 5°
+Double-tap layer → edit dialog: text content, size, color
+(10 swatches), bold/italic, background pill opacity
+Deselect = tap empty area
+OCR integration: "Detect text" button runs OcrService → each
+detected line becomes a NATIVE TEXT LAYER positioned exactly on
+its bbox with estimated size/color/weight pre-filled, AND the
+original pixels under it are covered by a background-colored
+patch layer (auto, part of the layer). User can then tap any
+detected line and retype — replacement inherits size/color.
+Z-order: layers panel (bottom sheet) with reorder up/down.
+Undo/redo covers every layer op (min 50 steps).
+Export: flatten via canvas capture at image resolution →
+re-encode (JPG q90 / PNG per original) via image package →
+Golden Save Rule. Verify exported text is crisp at full res
+(capture at pixel scale, not widget scale).
+Widget tests: layer drag changes offset; handle-drag changes
+scale; delete removes; export produces bytes > 0 with correct
+format magic bytes.
+Acceptance checklist:
+ Add text → drag anywhere, pinch-scale, rotate — all smooth 60fps
+ Double-tap edits content; style changes apply live
+ Detect text on a photo → 5 lines → all positioned correctly
+on their words; tap one, retype → new text matches original
+size/color closely; old text hidden
+ Undo/redo across all ops works
+ Export: text sharp, position matches screen exactly
+ Original file untouched (hash test)
+
+TASK 4 — PDF IN-PLACE EDIT: COVER-AND-REPLACE WITH FONT MATCHING
+Build:
+PDF page render → tappable. Two text sources, merged view:
+a. EMBEDDED text: use Syncfusion text extraction WITH layout details
+(line bounds + font name/size if the API provides; check docs — if
+font metadata unavailable, fall back to OCR for that page). NEVER
+run OCR when embedded text exists.
+b. SCANNED pages (no embedded text): render raster → OcrService.
+Tap any text line in Edit mode → floating popup (ui_rules pattern):
+[Edit] [Copy] [Style]. Edit → inline replacement flow:
+Original bbox recorded; a background-colored cover rect +
+replacement text are added as page annotations (Syncfusion
+graphics), drawn at: baseline = original baseline (or bbox
+bottom - descent), size = matched (embedded font size OR OCR
+estimate), color = embedded color OR OCR estimate, font =
+closest standard (Times→serif, Courier→mono, else Helvetica)
+Replacement text is LIVE-EDITABLE: tap again to retype, drag
+to nudge position, pinch/± to adjust size (fine-tune after
+auto-match), color swatches
+Font matching fidelity: for embedded text, use the extracted
+font SIZE exactly and map family to closest standard font; log
+original font name into the replacement's metadata comment for
+future improvement. For OCR path, use Task 2 estimates.
+Multi-page: page strip navigation retained; edits are per-page
+annotation sets; undo/redo global across pages.
+Save: flatten ALL annotations (covers + replacement texts +
+Task's earlier highlight/ink tools stay compatible) into NEW
+pdf via SAF. Hash test proves original untouched.
+UI copy in this mode must say "Replace text (creates a copy)" —
+never "edits original in place".
+Tests: embedded-text page → replacement uses exact extracted
+size; scanned page → OCR path; flatten roundtrip opens in
+another viewer correctly.
+Acceptance checklist:
+ Embedded-text PDF: tap "Hello World" 24pt black → retype
+"Hi there" → renders ~24pt black at same baseline
+ Scanned PDF: OCR boxes appear; tap & retype works with
+matched size/color estimate
+ Nudge/pinch fine-tuning works on replacement text
+ Original PDF byte-identical after save (hash)
+ 20-page doc: page 3 edit → save → pages 1,2,4..20 visually
+unchanged
+ Airplane mode full flow; analyze/tests green
+
+TASK 5 — EXCEL: FULL SPREADSHEET EDITING
+Goal: behaves like a real spreadsheet editor — edit any cell
+in place, insert/delete rows & columns with shifting, append rows,
+per-cell styling, multi-sheet.
+
+Build:
+Grid editor (existing xlsx viewer upgraded): single-tap selects
+cell (accent border + row/col header highlight); double-tap (or
+Edit toggle + tap) opens inline cell editor anchored to the
+cell — type → Enter commits and moves down, Tab moves right.
+Formula bar at top shows raw value of selected cell and is
+directly editable (store raw; display stored value — no formula
+evaluation in v2.1, formulas show last-saved cached value with
+"(formula)" chip; editing one overwrites the cell).
+Structure ops (toolbar / selection long-press menu):
+Insert row above / below (shifts down)
+Insert column left / right (shifts right)
+Delete row / column (confirm if non-empty)
+Append N rows at end (quick "+10 rows" affordance)
+Clear cell(s); selection: drag corner handle for range →
+batch clear / batch bold
+Styling per cell: bold, italic, text align L/C/R, via toolbar;
+number vs text detection preserved on write.
+Use the excel package for ALL sheet mutations — verify exact
+API names (insertRow/removeRow/insertColumn/removeColumn/updateCell/appendRow
++ CellStyle) against its pub.dev docs;
+whatever it lacks, implement at XML level via unzip/edit/rezip
+and log it. Preserve all untouched sheets/cells exactly.
+Undo/redo: command-pattern stack (cell edit, row/col insert/delete
+each one command), 50 steps, works across sheets.
+Styling-loss dialog at save: list any features the package
+dropped (merged cells, charts, conditional formatting) — never
+silent (edit_v2 §8).
+Tests: insert row mid-table shifts data; delete col with data
+warns; undo of column insert restores; roundtrip real xlsx —
+untouched cells byte/visually equivalent; 20 corrupt fixtures
+→ defined states, no crash.
+Acceptance checklist:
+ Tap cell → type → Enter commits, selection moves down
+ Insert row above row 5 → rows 5+ shift down correctly,
+formulas rows unaffected structurally
+ Insert/delete column with shift works on 3-sheet file
+ Append rows at bottom, fill them, save, reopen — all present
+ Bold/align applied and survive roundtrip where supported
+ Undo chain: edit → insert col → delete row → undo ×3 exact
+ Original untouched (hash); styling-loss dialog appears when
+applicable; airplane mode; analyze/tests green
+
+TASK 6 — PPTX: REAL SLIDE RENDERING + CANVA-STYLE EDITING
+BUG BEING FIXED: PPTX currently renders as a plain text dump.
+Unacceptable. Slides must look like slides.
+Build:
+PPTX parser (manual, via archive + xml — no幻 hallucinated
+libraries):
+Slide size from presentation.xml (EMU: 914400/inch; typical
+12192000×6858000) → scale EMU→canvas px
+Per slide: shapes p:sp (position a:off/a:ext, geometry
+a:prstGeom rect/roundRect/ellipse, fill a:solidFill,
+line), text bodies (a:p→a:r runs: text a:t, size
+a:rPr@sz hundredths-of-pt, bold, italic, color a:srgbClr,
+align, bullet flags), pictures p:pic (resolve rels →
+ppt/media/*, decode, position/size), backgrounds p:bg
+Unhandled elements (tables render as simple grids, charts/SmartArt
+as labeled placeholder box with title text)
+Slide canvas renderer: custom painter/widget tree — background
+fill, then z-ordered shapes, images, text frames with real
+wrapping + alignment + per-run styling. 16:9 letterboxed per
+ui_rules §9.14 geometry (slide cards become FULL slides).
+Canva-style Edit mode (Edit toggle from Task 1):
+Tap text frame → inline editable overlay box positioned on
+the frame; caret editing in place; font size ± buttons;
+bold/italic/color swatches; changes write back to run XML
+Drag text frame → move (updates a:off EMU); resize via
+corner handles (updates a:ext) for text boxes and shapes;
+pinch-zoom of SLIDE still works via outer InteractiveViewer
+(transform conflicts resolved: layer gestures capture when
+Edit + selected)
+Images: tappable → popup [Replace from gallery] [Remove] —
+replacement writes a new media entry + rel (keep aspect);
+drag-move images = stretch goal, not required
+Slide navigation: swipe between slides; slide strip thumbnails
+(rendered minis) at bottom; add-note not required.
+Save: rezip with ONLY the modified slide XMLs/media changed —
+byte-preserve everything else (hash-audit untouched parts).
+Golden Save Rule.
+Fidelity tests: build fixtures with known EMU geometry → assert
+rendered positions within 2px; font size mapping exact
+(sz=2400 → 24pt → scaled px); image rel resolution.
+Corrupt/oddball pptx fixtures (20): defined states, no crash.
+Acceptance checklist:
+ Real-world deck: slides show backgrounds, positioned text
+with correct sizes/colors, embedded images visible in place
+ Tap text → edit in place → drag frame → resize → all persist
+ Replace an image from gallery → shows on slide, position kept
+ Save → reopen: edits present; all non-edited slides/parts
+preserved (hash)
+ Deck with charts → placeholder box with title, NO crash,
+NO blank slide
+ 60fps pan/zoom on 10-slide deck on mid-range device
+ Airplane mode; analyze/tests green; PHASE_LOG final entry
+
+FINAL V2.1 GATE (after Task 6 verified)
+Re-run FULL regression: v1 viewer matrix (rules.txt §16) + v2
+edit_v2.txt §9 + every checklist above, all in airplane mode,
+on-device. Update README capability table honestly per the
+REALITY RULES. Only then tag v2.1.
