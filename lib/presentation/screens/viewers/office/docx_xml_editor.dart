@@ -22,10 +22,37 @@ class DocxParagraphModel {
   });
 }
 
+class DocxTableCellModel {
+  final int rowIndex;
+  final int colIndex;
+  final XmlElement element;
+  String text;
+
+  DocxTableCellModel({
+    required this.rowIndex,
+    required this.colIndex,
+    required this.element,
+    required this.text,
+  });
+}
+
+class DocxTableModel {
+  final int index;
+  final XmlElement element;
+  final List<List<DocxTableCellModel>> rows;
+
+  DocxTableModel({
+    required this.index,
+    required this.element,
+    required this.rows,
+  });
+}
+
 class DocxXmlEditor {
   final XmlDocument document;
   late XmlElement body;
   List<DocxParagraphModel> paragraphs = [];
+  List<dynamic> elements = [];
 
   DocxXmlEditor._(this.document) {
     _init();
@@ -38,52 +65,122 @@ class DocxXmlEditor {
 
   void _init() {
     body = _findLocalElements(document, 'body').firstOrNull ?? document.rootElement;
-    _refreshParagraphs();
+    _refreshElements();
   }
 
   static Iterable<XmlElement> _findLocalElements(XmlNode node, String localName) {
     return node.descendantElements.where((e) => e.name.local == localName);
   }
 
-  void _refreshParagraphs() {
+  void _refreshElements() {
+    elements.clear();
     paragraphs.clear();
-    int idx = 0;
+    int pIdx = 0;
+    int tblIdx = 0;
     for (final child in body.children) {
-      if (child is! XmlElement || child.name.local != 'p') continue;
+      if (child is! XmlElement) continue;
 
-      final pStyle = _findLocalElements(child, 'pStyle').firstOrNull?.getAttribute('w:val') ?? '';
-      final isHeading = pStyle.toLowerCase().contains('heading') || pStyle.toLowerCase().contains('title');
-      int headingLevel = 1;
-      if (pStyle.toLowerCase().contains('heading')) {
-        final digit = RegExp(r'\d').firstMatch(pStyle)?.group(0);
-        if (digit != null) headingLevel = int.tryParse(digit) ?? 1;
-      }
+      if (child.name.local == 'p') {
+        final pStyle = _findLocalElements(child, 'pStyle').firstOrNull?.getAttribute('w:val') ?? '';
+        final isHeading = pStyle.toLowerCase().contains('heading') || pStyle.toLowerCase().contains('title');
+        int headingLevel = 1;
+        if (pStyle.toLowerCase().contains('heading')) {
+          final digit = RegExp(r'\d').firstMatch(pStyle)?.group(0);
+          if (digit != null) headingLevel = int.tryParse(digit) ?? 1;
+        }
 
-      final isBullet = _findLocalElements(child, 'numPr').isNotEmpty;
+        final isBullet = _findLocalElements(child, 'numPr').isNotEmpty;
 
-      final fullText = StringBuffer();
-      bool isBold = false;
-      bool isItalic = false;
+        final fullText = StringBuffer();
+        bool isBold = false;
+        bool isItalic = false;
 
-      for (final r in _findLocalElements(child, 'r')) {
-        if (_findLocalElements(r, 'b').isNotEmpty) isBold = true;
-        if (_findLocalElements(r, 'i').isNotEmpty) isItalic = true;
+        for (final r in _findLocalElements(child, 'r')) {
+          if (_findLocalElements(r, 'b').isNotEmpty) isBold = true;
+          if (_findLocalElements(r, 'i').isNotEmpty) isItalic = true;
 
-        for (final t in _findLocalElements(r, 't')) {
-          fullText.write(t.innerText);
+          for (final t in _findLocalElements(r, 't')) {
+            fullText.write(t.innerText);
+          }
+        }
+
+        final pModel = DocxParagraphModel(
+          index: pIdx++,
+          element: child,
+          text: fullText.toString(),
+          isHeading: isHeading,
+          headingLevel: headingLevel,
+          isBullet: isBullet,
+          isBold: isBold,
+          isItalic: isItalic,
+        );
+        paragraphs.add(pModel);
+        elements.add(pModel);
+      } else if (child.name.local == 'tbl') {
+        final rows = <List<DocxTableCellModel>>[];
+        int rIdx = 0;
+        for (final tr in _findLocalElements(child, 'tr')) {
+          final rowCells = <DocxTableCellModel>[];
+          int cIdx = 0;
+          for (final tc in _findLocalElements(tr, 'tc')) {
+            final cellText = _findLocalElements(tc, 't').map((e) => e.innerText).join(' ').trim();
+            rowCells.add(DocxTableCellModel(
+              rowIndex: rIdx,
+              colIndex: cIdx++,
+              element: tc,
+              text: cellText,
+            ));
+          }
+          if (rowCells.isNotEmpty) {
+            rows.add(rowCells);
+            rIdx++;
+          }
+        }
+        if (rows.isNotEmpty) {
+          elements.add(DocxTableModel(
+            index: tblIdx++,
+            element: child,
+            rows: rows,
+          ));
         }
       }
+    }
+  }
 
-      paragraphs.add(DocxParagraphModel(
-        index: idx++,
-        element: child,
-        text: fullText.toString(),
-        isHeading: isHeading,
-        headingLevel: headingLevel,
-        isBullet: isBullet,
-        isBold: isBold,
-        isItalic: isItalic,
-      ));
+  void _refreshParagraphs() {
+    _refreshElements();
+  }
+
+  /// Updates the text of a table cell while preserving cell properties and runs.
+  void updateTableCell(DocxTableCellModel cell, String newText) {
+    cell.text = newText;
+    final tcElem = cell.element;
+    final runs = _findLocalElements(tcElem, 'r').toList();
+    if (runs.isEmpty) {
+      var p = _findLocalElements(tcElem, 'p').firstOrNull;
+      if (p == null) {
+        p = XmlElement(XmlName.qualified('w:p'));
+        tcElem.children.add(p);
+      }
+      p.children.add(XmlElement(XmlName.qualified('w:r'), [], [
+        XmlElement(XmlName.qualified('w:t'), [], [XmlText(newText)]),
+      ]));
+    } else {
+      final firstRun = runs.first;
+      final tNodes = _findLocalElements(firstRun, 't').toList();
+      if (tNodes.isNotEmpty) {
+        tNodes.first.innerText = newText;
+        for (int i = 1; i < tNodes.length; i++) {
+          tNodes[i].innerText = '';
+        }
+      } else {
+        firstRun.children.add(XmlElement(XmlName.qualified('w:t'), [], [XmlText(newText)]));
+      }
+      for (int r = 1; r < runs.length; r++) {
+        for (final t in _findLocalElements(runs[r], 't')) {
+          t.innerText = '';
+        }
+      }
     }
   }
 

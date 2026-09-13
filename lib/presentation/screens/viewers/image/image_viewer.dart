@@ -60,6 +60,51 @@ class _ImageViewerState extends ConsumerState<ImageViewer> {
     }
   }
 
+  void _showOcrOptions() {
+    final colors = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: colors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.edit_note, color: colors.textPrimary),
+              title: Text('Scan & Edit Text on Image', style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('Interactive on-image OCR: tap text to edit, add new blocks, save', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                ImageEditorScreen.open(context, widget.file, startWithOcr: true);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.copy, color: colors.textPrimary),
+              title: Text('Extract & Copy Text', style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('View recognized text in bottom sheet to copy or export', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _runOcr();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -200,7 +245,7 @@ class _ImageViewerState extends ConsumerState<ImageViewer> {
             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.document_scanner_outlined),
         tooltip: 'Recognize text (OCR)',
-        onPressed: _isOcrRunning ? null : _runOcr,
+        onPressed: _isOcrRunning ? null : _showOcrOptions,
       ),
       IconButton(
         icon: const Icon(Icons.edit_outlined),

@@ -188,10 +188,14 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
 
   bool _isOcrRunning = false;
 
-  Future<void> _runOcr() async {
+  Future<void> _runOcr({bool currentPageOnly = false, bool forceScan = false}) async {
     setState(() => _isOcrRunning = true);
     try {
-      final text = await OcrService.instance.extractOrOcrPdf(widget.file.path);
+      final text = await OcrService.instance.extractOrOcrPdf(
+        widget.file.path,
+        pageIndex: currentPageOnly ? _currentPage : null,
+        forceScanOcr: forceScan,
+      );
       if (!mounted) return;
       await OcrResultSheet.show(
         context,
@@ -212,6 +216,48 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
     }
   }
 
+  void _showOcrOptions(OpenFileColors colors) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surfaceCard,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'OCR / Text Recognition',
+                style: TextStyle(color: colors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: Icon(Icons.document_scanner, color: colors.textPrimary),
+                title: Text('OCR Current Page (${_currentPage + 1})', style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text('Scan and extract text from this book page', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _runOcr(currentPageOnly: true, forceScan: true);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.auto_stories, color: colors.textPrimary),
+                title: const Text('Extract / OCR Document'),
+                subtitle: Text('Extract vector text or scan book pages with ML Kit', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _runOcr(currentPageOnly: false, forceScan: false);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
@@ -222,7 +268,7 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.document_scanner_outlined),
         tooltip: 'Extract / OCR text',
-        onPressed: _isOcrRunning ? null : _runOcr,
+        onPressed: _isOcrRunning ? null : () => _showOcrOptions(colors),
       ),
       IconButton(
         icon: Icon(_isVertical ? Icons.swap_horiz : Icons.swap_vert),

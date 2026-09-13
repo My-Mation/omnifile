@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -23,11 +23,6 @@ enum _OfficeSubtype { docx, xlsx, pptx, legacy }
 // ---------------------------------------------------------------------------
 // DATA MODELS
 // ---------------------------------------------------------------------------
-
-class _DocxTable {
-  final List<List<String>> rows;
-  const _DocxTable(this.rows);
-}
 
 class _XlsxSheet {
   final String name;
@@ -161,9 +156,8 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
       }
 
       final ext = widget.file.extension.toLowerCase();
-      // Parse document asynchronously
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      final parsed = _parseOfficeBytes(bytes, ext);
+      // Parse document in background isolate to keep UI thread 100% responsive
+      final parsed = await compute(_parseOfficeBytesEntry, _OfficeParseParams(bytes, ext));
 
       if (!mounted) return;
 
@@ -175,6 +169,9 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
       } else {
         if (parsed.documentXml != null) {
           _docxXmlEditor = DocxXmlEditor.fromXmlString(parsed.documentXml!);
+          _docxElements = _docxXmlEditor!.elements;
+        } else {
+          _docxElements = parsed.docxElements;
         }
         var sheets = parsed.xlsxSheets;
         if (parsed.subtype == _OfficeSubtype.xlsx) {
@@ -195,7 +192,6 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
         setState(() {
           _isLoading = false;
           _detectedSubtype = parsed.subtype;
-          _docxElements = parsed.docxElements;
           _xlsxSheets = sheets;
           _pptxSlides = parsed.pptxSlides;
           _legacyParagraphs = parsed.legacyParagraphs;
@@ -578,7 +574,7 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                         onChanged: (val) {
                           elem.text = val;
                           _docxXmlEditor?.updateParagraphText(index, val);
-                          setState(() => _isDocxDirty = true);
+                          _isDocxDirty = true;
                         },
                       ),
                     ],
@@ -648,23 +644,36 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                 ),
               ),
             );
-          } else if (elem is _DocxTable) {
+          } else if (elem is DocxTableModel) {
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Table(
-                  border: TableBorder.all(color: colors.divider, width: 1, borderRadius: BorderRadius.circular(6)),
+                  border: TableBorder.all(color: colors.divider, width: 0.8, borderRadius: BorderRadius.circular(6)),
                   defaultColumnWidth: const IntrinsicColumnWidth(),
                   children: elem.rows.map((row) {
                     return TableRow(
                       decoration: BoxDecoration(color: colors.surfaceCard),
                       children: row.map((cell) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          child: SelectableText(
-                            cell,
-                            style: TextStyle(color: colors.textPrimary, fontSize: 13),
+                        return InkWell(
+                          onTap: () => _openDocxTableCellEditor(cell, colors),
+                          child: Container(
+                            constraints: const BoxConstraints(minWidth: 64, minHeight: 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    cell.text.isNotEmpty ? cell.text : ' ',
+                                    style: TextStyle(color: colors.textPrimary, fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.edit_outlined, size: 13, color: colors.textSecondary.withValues(alpha: 0.6)),
+                              ],
+                            ),
                           ),
                         );
                       }).toList(),
@@ -676,6 +685,53 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
           }
           return const SizedBox.shrink();
         },
+      ),
+    );
+  }
+
+  void _openDocxTableCellEditor(DocxTableCellModel cell, OpenFileColors colors) {
+    final controller = TextEditingController(text: cell.text);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surfaceCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text(
+          'Edit Table Cell (Row ${cell.rowIndex + 1}, Col ${cell.colIndex + 1})',
+          style: TextStyle(color: colors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: null,
+          autofocus: true,
+          style: TextStyle(color: colors.textPrimary),
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Cell text...',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: colors.accentPrimary,
+              foregroundColor: colors.accentOnAccent,
+            ),
+            onPressed: () {
+              final newText = controller.text.trim();
+              setState(() {
+                cell.text = newText;
+                _docxXmlEditor?.updateTableCell(cell, newText);
+                _isDocxDirty = true;
+              });
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Apply'),
+          ),
+        ],
       ),
     );
   }
@@ -792,7 +848,11 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                     ),
                     onChanged: (val) {
                       _xlsxXmlEditor?.updateCell(_selectedSheetIndex, _selectedRowIndex, _selectedColIndex, val);
-                      _syncXlsxState();
+                      if (_selectedRowIndex < currentSheet.rows.length &&
+                          _selectedColIndex < currentSheet.rows[_selectedRowIndex].length) {
+                        currentSheet.rows[_selectedRowIndex][_selectedColIndex] = val;
+                      }
+                      _isXlsxDirty = true;
                     },
                   ),
                 ),
@@ -806,7 +866,12 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                 onPressed: () {
                   _cellEditorController.clear();
                   _xlsxXmlEditor?.clearCell(_selectedSheetIndex, _selectedRowIndex, _selectedColIndex);
-                  _syncXlsxState();
+                  if (_selectedRowIndex < currentSheet.rows.length &&
+                      _selectedColIndex < currentSheet.rows[_selectedRowIndex].length) {
+                    currentSheet.rows[_selectedRowIndex][_selectedColIndex] = '';
+                  }
+                  _isXlsxDirty = true;
+                  setState(() {});
                 },
               ),
               // Expand Full Dialog
@@ -1046,6 +1111,8 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
   }
 
   void _openCellEditorDialog(OpenFileColors colors) {
+    if (_xlsxSheets.isEmpty || _selectedSheetIndex >= _xlsxSheets.length) return;
+    final currentSheet = _xlsxSheets[_selectedSheetIndex];
     final colName = XlsxXmlEditor.indexToColLetters(_selectedColIndex);
     final rowName = '${_selectedRowIndex + 1}';
     final dialogController = TextEditingController(text: _cellEditorController.text);
@@ -1080,7 +1147,12 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
               final newText = dialogController.text;
               _cellEditorController.text = newText;
               _xlsxXmlEditor?.updateCell(_selectedSheetIndex, _selectedRowIndex, _selectedColIndex, newText);
-              _syncXlsxState();
+              if (_selectedRowIndex < currentSheet.rows.length &&
+                  _selectedColIndex < currentSheet.rows[_selectedRowIndex].length) {
+                currentSheet.rows[_selectedRowIndex][_selectedColIndex] = newText;
+              }
+              _isXlsxDirty = true;
+              setState(() {});
               Navigator.of(ctx).pop();
             },
             child: const Text('Apply'),
@@ -1526,6 +1598,16 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
 // BACKGROUND PARSER FUNCTIONS (RUNS IN ISOLATE)
 // ---------------------------------------------------------------------------
 
+class _OfficeParseParams {
+  final Uint8List bytes;
+  final String extension;
+  const _OfficeParseParams(this.bytes, this.extension);
+}
+
+_ParsedOfficeData _parseOfficeBytesEntry(_OfficeParseParams params) {
+  return _parseOfficeBytes(params.bytes, params.extension);
+}
+
 Iterable<XmlElement> _findLocalElements(XmlNode node, String localName) {
   return node.descendantElements.where((e) => e.name.local.toLowerCase() == localName.toLowerCase());
 }
@@ -1605,49 +1687,9 @@ _ParsedOfficeData _parseDocx(Map<String, ArchiveFile> archive) {
       );
 
   final xmlString = utf8.decode(docFile.content as List<int>, allowMalformed: true);
-  final editor = DocxXmlEditor.fromXmlString(xmlString);
-  final docxElements = <dynamic>[];
-
-  for (final child in editor.body.children) {
-    if (child is! XmlElement) continue;
-
-    if (child.name.local == 'p') {
-      final pModel = editor.paragraphs.firstWhere(
-        (p) => p.element == child,
-        orElse: () => DocxParagraphModel(
-          index: docxElements.length,
-          element: child,
-          text: child.innerText.trim(),
-        ),
-      );
-      if (pModel.text.isNotEmpty) {
-        docxElements.add(pModel);
-      }
-    } else if (child.name.local == 'tbl') {
-      final tableRows = <List<String>>[];
-      for (final tr in _findLocalElements(child, 'tr')) {
-        final rowCells = <String>[];
-        for (final tc in _findLocalElements(tr, 'tc')) {
-          final cellText = _findLocalElements(tc, 't').map((e) => e.innerText).join(' ').trim();
-          rowCells.add(cellText);
-        }
-        if (rowCells.any((c) => c.isNotEmpty)) {
-          tableRows.add(rowCells);
-        }
-      }
-      if (tableRows.isNotEmpty) {
-        docxElements.add(_DocxTable(tableRows));
-      }
-    }
-  }
-
-  if (docxElements.isEmpty) {
-    docxElements.addAll(editor.paragraphs);
-  }
-
   return _ParsedOfficeData(
     subtype: _OfficeSubtype.docx,
-    docxElements: docxElements,
+    docxElements: const [],
     documentXml: xmlString,
   );
 }

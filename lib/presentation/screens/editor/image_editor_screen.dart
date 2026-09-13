@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import '../../../core/services/ocr_service.dart';
 import '../../../core/theme/open_file_colors.dart';
 import '../../../domain/entities/file_entity.dart';
+import '../../../domain/entities/image_text_overlay_model.dart';
 import '../../providers/detection_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/recents_provider.dart';
@@ -17,15 +18,17 @@ enum _ImageEditorTab { adjust, crop, rotate, text }
 
 class ImageEditorScreen extends ConsumerStatefulWidget {
   final FileEntity file;
+  final bool startWithOcr;
 
   const ImageEditorScreen({
     super.key,
     required this.file,
+    this.startWithOcr = false,
   });
 
-  static void open(BuildContext context, FileEntity file) {
+  static void open(BuildContext context, FileEntity file, {bool startWithOcr = false}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ImageEditorScreen(file: file)),
+      MaterialPageRoute(builder: (_) => ImageEditorScreen(file: file, startWithOcr: startWithOcr)),
     );
   }
 
@@ -56,10 +59,15 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
   // Crop Aspect Ratio
   double? _cropAspectRatio; // null = free, 1.0 = 1:1, 4/3, 16/9
 
-  // Text Overlay
+  // Text Overlay & OCR Text Blocks
   String _overlayText = '';
   Color _overlayColor = Colors.white;
   final Alignment _overlayAlignment = Alignment.bottomCenter;
+
+  List<ImageTextBlock> _textBlocks = [];
+  ImageTextBlock? _selectedBlock;
+  bool _isOcrScanning = false;
+  bool _tapToAddTextMode = false;
 
   @override
   void initState() {
@@ -94,6 +102,10 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         _decodedImage = decoded;
         _isLoading = false;
       });
+
+      if (widget.startWithOcr) {
+        _runImageOcr();
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -159,17 +171,59 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
 
       // 5. Draw text overlay if present
       if (_overlayText.trim().isNotEmpty) {
+        final argb = _overlayColor.toARGB32();
+        final textR = (argb >> 16) & 0xFF;
+        final textG = (argb >> 8) & 0xFF;
+        final textB = argb & 0xFF;
         img.drawString(
           processed,
           _overlayText.trim(),
           font: img.arial24,
           x: 20,
           y: math.max(10, processed.height - 50),
-          color: img.ColorRgb8(
-            (_overlayColor.r * 255).toInt(),
-            (_overlayColor.g * 255).toInt(),
-            (_overlayColor.b * 255).toInt(),
-          ),
+          color: img.ColorRgb8(textR, textG, textB),
+        );
+      }
+
+      // 5b. Draw all ImageTextBlocks (OCR replacements & manual text blocks)
+      for (final block in _textBlocks) {
+        if (block.text.trim().isEmpty) continue;
+
+        final x1 = block.rect.left.toInt().clamp(0, processed.width - 1);
+        final y1 = block.rect.top.toInt().clamp(0, processed.height - 1);
+        final x2 = block.rect.right.toInt().clamp(0, processed.width - 1);
+        final y2 = block.rect.bottom.toInt().clamp(0, processed.height - 1);
+
+        if (block.isCoverOriginal) {
+          final bgArgb = block.backgroundColor.toARGB32();
+          final bgR = (bgArgb >> 16) & 0xFF;
+          final bgG = (bgArgb >> 8) & 0xFF;
+          final bgB = bgArgb & 0xFF;
+          img.fillRect(
+            processed,
+            x1: x1,
+            y1: y1,
+            x2: x2,
+            y2: y2,
+            color: img.ColorRgb8(bgR, bgG, bgB),
+          );
+        }
+
+        final fgArgb = block.textColor.toARGB32();
+        final textR = (fgArgb >> 16) & 0xFF;
+        final textG = (fgArgb >> 8) & 0xFF;
+        final textB = fgArgb & 0xFF;
+        final font = block.fontSize < 18
+            ? img.arial14
+            : (block.fontSize > 36 ? img.arial48 : img.arial24);
+
+        img.drawString(
+          processed,
+          block.text,
+          font: font,
+          x: x1,
+          y: y1,
+          color: img.ColorRgb8(textR, textG, textB),
         );
       }
 
@@ -247,6 +301,365 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         SnackBar(content: Text('Could not save image: $e')),
       );
     }
+  }
+
+  Future<void> _runImageOcr() async {
+    setState(() => _isOcrScanning = true);
+    try {
+      final recognized = await OcrService.instance.recognizeImageFileDetailed(widget.file.path);
+      final newBlocks = <ImageTextBlock>[];
+      for (final block in recognized.blocks) {
+        for (final line in block.lines) {
+          final box = line.boundingBox;
+          if (box.width <= 0 || box.height <= 0 || line.text.trim().isEmpty) continue;
+          final estimatedFontSize = (box.height * 0.82).clamp(10.0, 120.0);
+          newBlocks.add(ImageTextBlock(
+            id: 'ocr_${line.hashCode}_${box.left.toInt()}_${box.top.toInt()}',
+            rect: box,
+            text: line.text,
+            fontSize: estimatedFontSize,
+            isCoverOriginal: true,
+            isManual: false,
+            textColor: Colors.black,
+            backgroundColor: Colors.white,
+          ));
+        }
+      }
+
+      setState(() {
+        _textBlocks = newBlocks;
+        _isOcrScanning = false;
+        _activeTab = _ImageEditorTab.text;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              newBlocks.isNotEmpty
+                  ? 'Recognized ${newBlocks.length} text blocks. Tap any text on the image to edit it, or tap an empty area to add text.'
+                  : 'No text detected in this image.',
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isOcrScanning = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('OCR failed: $e')),
+        );
+      }
+    }
+  }
+
+  void _editTextBlockDialog(ImageTextBlock block) {
+    final colors = context.colors;
+    final controller = TextEditingController(text: block.text);
+    double curFontSize = block.fontSize;
+    Color curTextColor = block.textColor;
+    Color curBgColor = block.backgroundColor;
+    bool isCover = block.isCoverOriginal;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: colors.surfaceCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Text(
+            block.isManual ? 'Edit Text Block' : 'Edit OCR Text (Cover & Replace)',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  maxLines: null,
+                  autofocus: true,
+                  style: TextStyle(color: colors.textPrimary),
+                  decoration: const InputDecoration(
+                    labelText: 'Text Content',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('Font Size: ${curFontSize.toInt()} pt', style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+                Slider(
+                  value: curFontSize.clamp(8.0, 72.0),
+                  min: 8.0,
+                  max: 72.0,
+                  activeColor: colors.accentPrimary,
+                  onChanged: (v) => setDialogState(() => curFontSize = v),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Cover Original Text', style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+                    Switch(
+                      value: isCover,
+                      activeThumbColor: colors.accentPrimary,
+                      onChanged: (v) => setDialogState(() => isCover = v),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Theme Style', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Black on White'),
+                      selected: curTextColor == Colors.black && curBgColor == Colors.white,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = Colors.black;
+                        curBgColor = Colors.white;
+                      }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('White on Black'),
+                      selected: curTextColor == Colors.white && curBgColor == Colors.black,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = Colors.white;
+                        curBgColor = Colors.black;
+                      }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Gray on Transparent'),
+                      selected: curBgColor == Colors.transparent,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = const Color(0xFFCCCCCC);
+                        curBgColor = Colors.transparent;
+                        isCover = false;
+                      }),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _textBlocks.removeWhere((b) => b.id == block.id);
+                  if (_selectedBlock?.id == block.id) _selectedBlock = null;
+                });
+                Navigator.of(ctx).pop();
+              },
+              child: Text('Delete', style: TextStyle(color: colors.stateError)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors.accentPrimary,
+                foregroundColor: colors.accentOnAccent,
+              ),
+              onPressed: () {
+                final newText = controller.text.trim();
+                setState(() {
+                  block.text = newText;
+                  block.fontSize = curFontSize;
+                  block.textColor = curTextColor;
+                  block.backgroundColor = curBgColor;
+                  block.isCoverOriginal = isCover;
+                });
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _addTextBlockAtCoordinates(double imgX, double imgY) {
+    final colors = context.colors;
+    final controller = TextEditingController();
+    double curFontSize = 24.0;
+    Color curTextColor = Colors.black;
+    Color curBgColor = Colors.white;
+    bool isCover = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: colors.surfaceCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Text(
+            'Add Text at Tapped Position',
+            style: TextStyle(color: colors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  style: TextStyle(color: colors.textPrimary),
+                  decoration: const InputDecoration(
+                    labelText: 'Enter text',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('Font Size: ${curFontSize.toInt()} pt', style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+                Slider(
+                  value: curFontSize,
+                  min: 10.0,
+                  max: 72.0,
+                  activeColor: colors.accentPrimary,
+                  onChanged: (v) => setDialogState(() => curFontSize = v),
+                ),
+                const SizedBox(height: 8),
+                Text('Style & Background', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Black on White'),
+                      selected: curTextColor == Colors.black && curBgColor == Colors.white,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = Colors.black;
+                        curBgColor = Colors.white;
+                        isCover = true;
+                      }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('White on Black'),
+                      selected: curTextColor == Colors.white && curBgColor == Colors.black,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = Colors.white;
+                        curBgColor = Colors.black;
+                        isCover = true;
+                      }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('White (Transparent)'),
+                      selected: curTextColor == Colors.white && curBgColor == Colors.transparent,
+                      onSelected: (_) => setDialogState(() {
+                        curTextColor = Colors.white;
+                        curBgColor = Colors.transparent;
+                        isCover = false;
+                      }),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors.accentPrimary,
+                foregroundColor: colors.accentOnAccent,
+              ),
+              onPressed: () {
+                final text = controller.text.trim();
+                if (text.isNotEmpty) {
+                  final estimatedWidth = (text.length * curFontSize * 0.6).clamp(60.0, 600.0);
+                  final estimatedHeight = curFontSize * 1.3;
+                  final newBlock = ImageTextBlock(
+                    id: 'manual_${DateTime.now().microsecondsSinceEpoch}',
+                    rect: Rect.fromLTWH(imgX, imgY, estimatedWidth, estimatedHeight),
+                    text: text,
+                    fontSize: curFontSize,
+                    textColor: curTextColor,
+                    backgroundColor: curBgColor,
+                    isCoverOriginal: isCover,
+                    isManual: true,
+                  );
+                  setState(() {
+                    _textBlocks.add(newBlock);
+                    _selectedBlock = newBlock;
+                  });
+                }
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showOcrOptions() {
+    final colors = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: colors.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.edit_note, color: colors.textPrimary),
+              title: Text('Scan & Edit Text on Image', style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('Detect text blocks and edit them directly on the canvas', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _runImageOcr();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.copy, color: colors.textPrimary),
+              title: Text('Extract & Copy Text', style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('View recognized text in bottom sheet to copy or export', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                try {
+                  final text = await OcrService.instance.recognizeImageFile(widget.file.path);
+                  if (!mounted) return;
+                  await OcrResultSheet.show(
+                    context,
+                    text: text,
+                    sourceFileName: widget.file.name,
+                    sourceFilePath: widget.file.path,
+                  );
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('OCR recognition failed: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showTextOverlayDialog() {
@@ -358,26 +771,11 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.document_scanner_outlined),
+            icon: _isOcrScanning
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.document_scanner_outlined),
             tooltip: 'Extract text (OCR)',
-            onPressed: () async {
-              try {
-                final text = await OcrService.instance.recognizeImageFile(widget.file.path);
-                if (!context.mounted) return;
-                await OcrResultSheet.show(
-                  context,
-                  text: text,
-                  sourceFileName: widget.file.name,
-                  sourceFilePath: widget.file.path,
-                );
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('OCR recognition failed: $e')),
-                  );
-                }
-              }
-            },
+            onPressed: _isOcrScanning ? null : _showOcrOptions,
           ),
           Padding(
             padding: const EdgeInsets.only(right: 12),
@@ -403,53 +801,174 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
             child: Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: ColorFiltered(
-                  colorFilter: _buildColorFilter(),
-                  child: Transform.rotate(
-                    angle: _rotationAngle * (math.pi / 180),
-                    child: Transform.flip(
-                      flipX: _flipHorizontal,
-                      flipY: _flipVertical,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          if (_cropAspectRatio != null)
-                            AspectRatio(
-                              aspectRatio: _cropAspectRatio!,
-                              child: Image.memory(
-                                _originalBytes!,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                          else
-                            Image.memory(
-                              _originalBytes!,
-                              fit: BoxFit.contain,
-                            ),
-                          if (_overlayText.isNotEmpty)
-                            Align(
-                              alignment: _overlayAlignment,
-                              child: Container(
-                                margin: const EdgeInsets.all(16),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.6),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  _overlayText,
-                                  style: TextStyle(
-                                    color: _overlayColor,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (_decodedImage == null) return const SizedBox.shrink();
+                    final imgW = _decodedImage!.width.toDouble();
+                    final imgH = _decodedImage!.height.toDouble();
+
+                    final availW = constraints.maxWidth;
+                    final availH = constraints.maxHeight;
+
+                    final effectiveAspect = _cropAspectRatio ?? (imgW / imgH);
+                    double renderW;
+                    double renderH;
+                    if (availW / availH > effectiveAspect) {
+                      renderH = availH;
+                      renderW = availH * effectiveAspect;
+                    } else {
+                      renderW = availW;
+                      renderH = availW / effectiveAspect;
+                    }
+
+                    final scaleX = renderW / imgW;
+                    final scaleY = renderH / imgH;
+
+                    return ColorFiltered(
+                      colorFilter: _buildColorFilter(),
+                      child: Transform.rotate(
+                        angle: _rotationAngle * (math.pi / 180),
+                        child: Transform.flip(
+                          flipX: _flipHorizontal,
+                          flipY: _flipVertical,
+                          child: SizedBox(
+                            width: renderW,
+                            height: renderH,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                // Base Image
+                                Positioned.fill(
+                                  child: Image.memory(
+                                    _originalBytes!,
+                                    width: renderW,
+                                    height: renderH,
+                                    fit: _cropAspectRatio != null ? BoxFit.cover : BoxFit.contain,
                                   ),
                                 ),
-                              ),
+
+                                // Background Canvas Tap Handler (for adding text blocks on tap)
+                                Positioned.fill(
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapUp: (details) {
+                                      if (_activeTab == _ImageEditorTab.text || _tapToAddTextMode) {
+                                        final touchPos = details.localPosition;
+                                        final imgX = touchPos.dx / scaleX;
+                                        final imgY = touchPos.dy / scaleY;
+
+                                        // If clicked inside an existing text block, edit that block
+                                        for (final b in _textBlocks.reversed) {
+                                          final bRect = Rect.fromLTWH(
+                                            b.rect.left * scaleX,
+                                            b.rect.top * scaleY,
+                                            math.max(b.rect.width * scaleX, 24.0),
+                                            math.max(b.rect.height * scaleY, 16.0),
+                                          );
+                                          if (bRect.contains(touchPos)) {
+                                            setState(() => _selectedBlock = b);
+                                            _editTextBlockDialog(b);
+                                            return;
+                                          }
+                                        }
+
+                                        // Otherwise, add a new block at this exact tapped spot
+                                        _addTextBlockAtCoordinates(imgX, imgY);
+                                      }
+                                    },
+                                  ),
+                                ),
+
+                                // Interactive Text Blocks (OCR & Manual)
+                                if (_cropAspectRatio == null)
+                                  ..._textBlocks.map((block) {
+                                    final screenLeft = block.rect.left * scaleX;
+                                    final screenTop = block.rect.top * scaleY;
+                                    final screenWidth = math.max(block.rect.width * scaleX, 24.0);
+                                    final isSelected = _selectedBlock?.id == block.id;
+
+                                    return Positioned(
+                                      left: screenLeft,
+                                      top: screenTop,
+                                      width: screenWidth,
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () {
+                                          setState(() => _selectedBlock = block);
+                                          _editTextBlockDialog(block);
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                                          decoration: BoxDecoration(
+                                            color: block.isCoverOriginal ? block.backgroundColor : Colors.transparent,
+                                            border: Border.all(
+                                              color: isSelected ? Colors.white : Colors.grey.withValues(alpha: 0.8),
+                                              width: isSelected ? 1.5 : 1.0,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            block.text,
+                                            style: TextStyle(
+                                              color: block.textColor,
+                                              fontSize: (block.fontSize * scaleY).clamp(8.0, 72.0),
+                                              fontWeight: FontWeight.w600,
+                                              height: 1.1,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+
+                                // Optional Watermark Text
+                                if (_overlayText.isNotEmpty)
+                                  Align(
+                                    alignment: _overlayAlignment,
+                                    child: Container(
+                                      margin: const EdgeInsets.all(16),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(alpha: 0.6),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        _overlayText,
+                                        style: TextStyle(
+                                          color: _overlayColor,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                // OCR Loading Overlay
+                                if (_isOcrScanning)
+                                  Positioned.fill(
+                                    child: Container(
+                                      color: Colors.black.withValues(alpha: 0.5),
+                                      child: const Center(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            CircularProgressIndicator(color: Colors.white),
+                                            SizedBox(height: 12),
+                                            Text(
+                                              'Recognizing text on image...',
+                                              style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                        ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -495,10 +1014,7 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
                         icon: Icons.text_fields_rounded,
                         label: 'Text',
                         isSelected: _activeTab == _ImageEditorTab.text,
-                        onTap: () {
-                          setState(() => _activeTab = _ImageEditorTab.text);
-                          _showTextOverlayDialog();
-                        },
+                        onTap: () => setState(() => _activeTab = _ImageEditorTab.text),
                       ),
                     ],
                   ),
@@ -597,17 +1113,73 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
           ],
         );
       case _ImageEditorTab.text:
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _overlayText.isNotEmpty ? 'Text: "$_overlayText"' : 'No text overlay added',
-              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: _isOcrScanning
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.document_scanner_outlined, size: 16),
+                    label: Text(_isOcrScanning ? 'Scanning...' : 'OCR Scan & Edit'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.textPrimary,
+                      side: BorderSide(color: colors.divider),
+                    ),
+                    onPressed: _isOcrScanning ? null : _runImageOcr,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: Icon(_tapToAddTextMode ? Icons.touch_app : Icons.add_comment_outlined, size: 16),
+                    label: Text(_tapToAddTextMode ? 'Tap Spot (Active)' : 'Tap Spot to Add'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _tapToAddTextMode ? colors.accentOnAccent : colors.textPrimary,
+                      backgroundColor: _tapToAddTextMode ? colors.accentPrimary : null,
+                      side: BorderSide(color: colors.divider),
+                    ),
+                    onPressed: () {
+                      setState(() => _tapToAddTextMode = !_tapToAddTextMode);
+                    },
+                  ),
+                ),
+              ],
             ),
-            TextButton.icon(
-              icon: const Icon(Icons.edit, size: 14),
-              label: Text(_overlayText.isNotEmpty ? 'Edit Text' : 'Add Text'),
-              onPressed: _showTextOverlayDialog,
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _textBlocks.isNotEmpty
+                      ? '${_textBlocks.length} text blocks on image'
+                      : (_tapToAddTextMode ? 'Tap anywhere on the image to place text' : 'Tap text to edit, or tap OCR to detect'),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                ),
+                if (_textBlocks.isNotEmpty)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(50, 20),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => setState(() => _textBlocks.clear()),
+                    child: Text('Clear All', style: TextStyle(color: colors.stateError, fontSize: 11)),
+                  )
+                else
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(50, 20),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: _showTextOverlayDialog,
+                    child: Text(_overlayText.isNotEmpty ? 'Watermark: Edit' : '+ Watermark', style: TextStyle(color: colors.textSecondary, fontSize: 11)),
+                  ),
+              ],
             ),
           ],
         );

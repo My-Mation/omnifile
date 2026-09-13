@@ -83,5 +83,67 @@ void main() {
       expect(editor.paragraphs[1].text, 'Sub-heading paragraph');
       expect(editor.paragraphs[2].text, 'First paragraph content.');
     });
+
+    test('parses tables into DocxTableModel preserving order with paragraphs', () {
+      const sampleWithTable = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Introduction</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Cell 1A</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Cell 1B</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Cell 2A</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Cell 2B</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>Conclusion</w:t></w:r></w:p>
+  </w:body>
+</w:document>''';
+
+      final editor = DocxXmlEditor.fromXmlString(sampleWithTable);
+      expect(editor.elements.length, 3);
+      expect(editor.elements[0] is DocxParagraphModel, true);
+      expect((editor.elements[0] as DocxParagraphModel).text, 'Introduction');
+
+      expect(editor.elements[1] is DocxTableModel, true);
+      final table = editor.elements[1] as DocxTableModel;
+      expect(table.rows.length, 2);
+      expect(table.rows[0].length, 2);
+      expect(table.rows[0][0].text, 'Cell 1A');
+      expect(table.rows[0][1].text, 'Cell 1B');
+      expect(table.rows[1][0].text, 'Cell 2A');
+      expect(table.rows[1][1].text, 'Cell 2B');
+
+      expect(editor.elements[2] is DocxParagraphModel, true);
+      expect((editor.elements[2] as DocxParagraphModel).text, 'Conclusion');
+    });
+
+    test('updates table cell text and serializes correctly to XML', () {
+      const sampleWithTable = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Cell 1A</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Cell 1B</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>''';
+
+      final editor = DocxXmlEditor.fromXmlString(sampleWithTable);
+      final table = editor.elements[0] as DocxTableModel;
+      final cell1B = table.rows[0][1];
+
+      editor.updateTableCell(cell1B, 'Updated 1B Value');
+      expect(cell1B.text, 'Updated 1B Value');
+
+      final xml = editor.buildXml();
+      expect(xml.contains('Updated 1B Value'), true);
+      expect(xml.contains('Cell 1A'), true);
+    });
   });
 }
