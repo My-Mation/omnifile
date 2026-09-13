@@ -5,6 +5,7 @@ class ImageTextBlock {
   final String id;
   Rect rect;
   String text;
+  String originalText;
   double fontSize;
   Color textColor;
   Color backgroundColor;
@@ -15,12 +16,15 @@ class ImageTextBlock {
     required this.id,
     required this.rect,
     required this.text,
+    String? originalText,
     required this.fontSize,
     this.textColor = Colors.black,
     this.backgroundColor = Colors.white,
     this.isCoverOriginal = true,
     this.isManual = false,
-  });
+  }) : originalText = originalText ?? text;
+
+  bool get isModified => text != originalText;
 
   ImageTextBlock copyWith({
     String? id,

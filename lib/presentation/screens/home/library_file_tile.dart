@@ -6,6 +6,7 @@ import '../../../core/utils/formatters.dart';
 import '../../../domain/entities/file_entity.dart';
 import '../../../domain/entities/viewer_type.dart';
 import '../editor/image_editor_screen.dart';
+import '../editor/pdf_editor_screen.dart';
 import '../editor/video_editor_screen.dart';
 import '../../widgets/file_info_dialog.dart';
 import '../../widgets/file_type_badge.dart';
@@ -85,7 +86,9 @@ class LibraryFileTile extends StatelessWidget {
     ).then((value) {
       if (value == null || !context.mounted) return;
       if (value == 'edit') {
-        if (file.detectedType == ViewerType.image) {
+        if (file.detectedType == ViewerType.pdf) {
+          PdfEditorScreen.open(context, file);
+        } else if (file.detectedType == ViewerType.image) {
           ImageEditorScreen.open(context, file);
         } else if (file.detectedType == ViewerType.video) {
           VideoEditorScreen.open(context, file);

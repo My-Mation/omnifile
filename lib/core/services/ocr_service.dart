@@ -167,6 +167,26 @@ class OcrService {
       } finally {
         document?.dispose();
       }
+
+      // If no vector text was found (scanned PDF / book photos), run raster OCR
+      if (result.isEmpty) {
+        final renderedPaths = await renderPdfPages(pdfPath, scale: 1.5);
+        for (int i = 0; i < renderedPaths.length; i++) {
+          final imgPath = renderedPaths[i];
+          try {
+            final pageText = await recognizeImageFile(imgPath);
+            if (pageText.trim().isNotEmpty) {
+              result[i] = pageText.trim();
+            }
+          } catch (_) {
+          } finally {
+            try {
+              final f = File(imgPath);
+              if (await f.exists()) await f.delete();
+            } catch (_) {}
+          }
+        }
+      }
     } catch (_) {}
     return result;
   }

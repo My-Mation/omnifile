@@ -9,8 +9,8 @@ import '../../../../domain/entities/file_entity.dart';
 import '../../../providers/shared_preferences_provider.dart';
 import '../../../widgets/in_viewer_find_bar.dart';
 import '../../../widgets/o_banner.dart';
-import '../../../widgets/ocr_result_sheet.dart';
 import '../../../widgets/viewer_shell.dart';
+import '../../editor/pdf_editor_screen.dart';
 
 class _PdfSearchMatch {
   final int pageIndex;
@@ -304,77 +304,6 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
     );
   }
 
-  bool _isOcrRunning = false;
-
-  Future<void> _runOcr({bool currentPageOnly = false, bool forceScan = false}) async {
-    setState(() => _isOcrRunning = true);
-    try {
-      final text = await OcrService.instance.extractOrOcrPdf(
-        widget.file.path,
-        pageIndex: currentPageOnly ? _currentPage : null,
-        forceScanOcr: forceScan,
-      );
-      if (!mounted) return;
-      await OcrResultSheet.show(
-        context,
-        text: text,
-        sourceFileName: widget.file.name,
-        sourceFilePath: widget.file.path,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to extract text: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isOcrRunning = false);
-      }
-    }
-  }
-
-  void _showOcrOptions(OpenFileColors colors) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: colors.surfaceCard,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'OCR / Text Recognition',
-                style: TextStyle(color: colors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: Icon(Icons.document_scanner, color: colors.textPrimary),
-                title: Text('OCR Current Page (${_currentPage + 1})', style: TextStyle(color: colors.textPrimary)),
-                subtitle: Text('Scan and extract text from this book page', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  _runOcr(currentPageOnly: true, forceScan: true);
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.auto_stories, color: colors.textPrimary),
-                title: const Text('Extract / OCR Document'),
-                subtitle: Text('Extract vector text or scan book pages with ML Kit', style: TextStyle(color: colors.textSecondary, fontSize: 12)),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  _runOcr(currentPageOnly: false, forceScan: false);
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -401,11 +330,9 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
         onPressed: _copyWholePage,
       ),
       IconButton(
-        icon: _isOcrRunning
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.document_scanner_outlined),
-        tooltip: 'Extract / OCR text',
-        onPressed: _isOcrRunning ? null : () => _showOcrOptions(colors),
+        icon: const Icon(Icons.edit_outlined),
+        tooltip: 'Edit text in PDF',
+        onPressed: () => PdfEditorScreen.open(context, widget.file, initialPage: _currentPage),
       ),
       IconButton(
         icon: Icon(_isVertical ? Icons.swap_horiz : Icons.swap_vert),
@@ -575,6 +502,24 @@ class _PdfViewerState extends ConsumerState<PdfViewer> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    icon: Icon(Icons.edit_outlined, size: 14, color: colors.accentPrimary),
+                    label: Text('Highlight & Edit', style: TextStyle(color: colors.accentPrimary, fontSize: 11)),
+                    onPressed: () {
+                      PdfEditorScreen.open(
+                        context,
+                        widget.file,
+                        initialPage: _searchMatches[_currentSearchIndex].pageIndex,
+                        initialSearchQuery: _searchController.text,
+                      );
+                    },
                   ),
                 ],
               ),

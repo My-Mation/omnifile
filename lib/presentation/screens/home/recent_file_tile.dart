@@ -3,6 +3,10 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/open_file_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/entities/file_entity.dart';
+import '../../../domain/entities/viewer_type.dart';
+import '../editor/image_editor_screen.dart';
+import '../editor/pdf_editor_screen.dart';
+import '../editor/video_editor_screen.dart';
 import '../../widgets/file_info_dialog.dart';
 import '../../widgets/file_type_icon.dart';
 import '../../widgets/o_bottom_sheet.dart';
@@ -24,6 +28,24 @@ class RecentFileTile extends StatelessWidget {
       context: context,
       title: Formatters.middleTruncate(file.name, maxLength: 28),
       actions: [
+        if (file.detectedType == ViewerType.pdf)
+          OBottomSheetAction(
+            icon: Icons.edit_outlined,
+            label: 'Edit PDF text',
+            onTap: () => PdfEditorScreen.open(context, file),
+          ),
+        if (file.detectedType == ViewerType.image)
+          OBottomSheetAction(
+            icon: Icons.edit_outlined,
+            label: 'Edit image',
+            onTap: () => ImageEditorScreen.open(context, file),
+          ),
+        if (file.detectedType == ViewerType.video)
+          OBottomSheetAction(
+            icon: Icons.edit_outlined,
+            label: 'Trim video',
+            onTap: () => VideoEditorScreen.open(context, file),
+          ),
         OBottomSheetAction(
           icon: Icons.info_outline,
           label: 'File info',
