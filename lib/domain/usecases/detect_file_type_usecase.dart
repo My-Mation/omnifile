@@ -53,8 +53,8 @@ class DetectFileTypeUseCase {
     'txt': ViewerType.text,
     'text': ViewerType.text,
     'log': ViewerType.text,
-    'csv': ViewerType.text,
-    'tsv': ViewerType.text,
+    'csv': ViewerType.office,
+    'tsv': ViewerType.office,
     'conf': ViewerType.text,
     'config': ViewerType.text,
     'cfg': ViewerType.code,
@@ -275,6 +275,27 @@ class DetectFileTypeUseCase {
     'fb2': ViewerType.epub,
     'cbz': ViewerType.archive,
     'cbr': ViewerType.archive,
+
+    // Binary / Executable / Hex
+    'dat': ViewerType.hex,
+    'exe': ViewerType.hex,
+    'dll': ViewerType.hex,
+    'so': ViewerType.hex,
+    'dylib': ViewerType.hex,
+    'class': ViewerType.hex,
+    'o': ViewerType.hex,
+    'obj': ViewerType.hex,
+    'iso': ViewerType.hex,
+    'img': ViewerType.hex,
+    'rom': ViewerType.hex,
+    'elf': ViewerType.hex,
+    'wasm': ViewerType.hex,
+    'dex': ViewerType.hex,
+    'lib': ViewerType.hex,
+    'a': ViewerType.hex,
+    'sys': ViewerType.hex,
+    'drv': ViewerType.hex,
+    'hex': ViewerType.hex,
   };
 
   static ViewerType? _checkSpecialName(String? fileName) {

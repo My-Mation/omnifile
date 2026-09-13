@@ -351,13 +351,21 @@ class XlsxXmlEditor {
   }
 
   Uint8List buildArchiveBytes() {
-    for (final sheet in sheets) {
-      final sheetXml = _buildSheetXml(sheet);
-      // Replace or add in archive
-      _archive.add(ArchiveFile.string(sheet.archivePath, sheetXml));
+    final sheetPaths = sheets.map((s) => s.archivePath.toLowerCase()).toSet();
+    final newArchive = Archive();
+
+    for (final file in _archive.files) {
+      if (!sheetPaths.contains(file.name.toLowerCase())) {
+        newArchive.addFile(file);
+      }
     }
 
-    final encoded = ZipEncoder().encode(_archive);
+    for (final sheet in sheets) {
+      final sheetXml = _buildSheetXml(sheet);
+      newArchive.addFile(ArchiveFile.string(sheet.archivePath, sheetXml));
+    }
+
+    final encoded = ZipEncoder().encode(newArchive);
     return Uint8List.fromList(encoded);
   }
 }

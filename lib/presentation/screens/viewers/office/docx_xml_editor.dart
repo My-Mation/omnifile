@@ -151,37 +151,21 @@ class DocxXmlEditor {
     _refreshElements();
   }
 
-  /// Updates the text of a table cell while preserving cell properties and runs.
+  /// Updates the text of a table cell while preserving cell properties and formatting.
   void updateTableCell(DocxTableCellModel cell, String newText) {
     cell.text = newText;
     final tcElem = cell.element;
-    final runs = _findLocalElements(tcElem, 'r').toList();
-    if (runs.isEmpty) {
-      var p = _findLocalElements(tcElem, 'p').firstOrNull;
-      if (p == null) {
-        p = XmlElement(XmlName.qualified('w:p'));
-        tcElem.children.add(p);
-      }
-      p.children.add(XmlElement(XmlName.qualified('w:r'), [], [
-        XmlElement(XmlName.qualified('w:t'), [], [XmlText(newText)]),
-      ]));
-    } else {
-      final firstRun = runs.first;
-      final tNodes = _findLocalElements(firstRun, 't').toList();
-      if (tNodes.isNotEmpty) {
-        tNodes.first.innerText = newText;
-        for (int i = 1; i < tNodes.length; i++) {
-          tNodes[i].innerText = '';
-        }
-      } else {
-        firstRun.children.add(XmlElement(XmlName.qualified('w:t'), [], [XmlText(newText)]));
-      }
-      for (int r = 1; r < runs.length; r++) {
-        for (final t in _findLocalElements(runs[r], 't')) {
-          t.innerText = '';
-        }
-      }
+    // Preserve cell properties (w:tcPr) if present
+    final tcPr = _findLocalElements(tcElem, 'tcPr').firstOrNull?.copy();
+    tcElem.children.removeWhere((c) => c is XmlElement && (c.name.local == 'p' || c.name.local == 'tbl'));
+    if (tcPr != null) {
+      tcElem.children.add(tcPr);
     }
+    tcElem.children.add(XmlElement(XmlName.qualified('w:p'), [], [
+      XmlElement(XmlName.qualified('w:r'), [], [
+        XmlElement(XmlName.qualified('w:t'), [], [XmlText(newText)]),
+      ]),
+    ]));
   }
 
   /// Updates the text of the paragraph at [paragraphIndex].

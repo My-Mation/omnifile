@@ -70,6 +70,11 @@ class OcrService {
   /// If the PDF contains scanned pages or book photos (no vector text),
   /// it automatically falls back to rendering PDF pages as high-resolution images
   /// and running Google ML Kit Text Recognition on each page.
+  /// Extracts text from PDF files 100% offline.
+  /// First attempts fast vector text extraction.
+  /// If the PDF contains scanned pages or book photos (no vector text),
+  /// it automatically falls back to rendering PDF pages as high-resolution images
+  /// and running Google ML Kit Text Recognition on each page.
   Future<String> extractOrOcrPdf(String pdfPath, {int? pageIndex, bool forceScanOcr = false}) async {
     final file = File(pdfPath);
     if (!await file.exists()) {
@@ -86,9 +91,14 @@ class OcrService {
       try {
         document = PdfDocument(inputBytes: bytes);
         final extractor = PdfTextExtractor(document);
-        final extracted = extractor.extractText().trim();
+        final String extracted;
+        if (pageIndex != null && pageIndex >= 0 && pageIndex < document.pages.count) {
+          extracted = extractor.extractText(startPageIndex: pageIndex, endPageIndex: pageIndex).trim();
+        } else {
+          extracted = extractor.extractText().trim();
+        }
 
-        if (extracted.isNotEmpty) {
+        if (extracted.length > 20) {
           return extracted;
         }
       } catch (_) {
@@ -100,7 +110,7 @@ class OcrService {
 
     // Fallback: Render PDF page(s) to images using native PdfRenderer and run ML Kit OCR
     final pageIndices = pageIndex != null ? [pageIndex] : null;
-    final renderedPaths = await renderPdfPages(pdfPath, pageIndices: pageIndices, scale: 2.0);
+    final renderedPaths = await renderPdfPages(pdfPath, pageIndices: pageIndices, scale: 1.5);
 
     if (renderedPaths.isEmpty) {
       return 'No readable text or pages could be extracted from this PDF.';
@@ -131,5 +141,33 @@ class OcrService {
     }
 
     return 'No readable text could be recognized from the PDF pages.';
+  }
+
+  /// Indexes text across all pages in a PDF for in-viewer search and instant lookup.
+  Future<Map<int, String>> indexPdfAllPages(String pdfPath) async {
+    final result = <int, String>{};
+    try {
+      final file = File(pdfPath);
+      if (!await file.exists()) return result;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return result;
+
+      PdfDocument? document;
+      try {
+        document = PdfDocument(inputBytes: bytes);
+        final extractor = PdfTextExtractor(document);
+        for (int i = 0; i < document.pages.count; i++) {
+          try {
+            final pageText = extractor.extractText(startPageIndex: i, endPageIndex: i).trim();
+            if (pageText.isNotEmpty) {
+              result[i] = pageText;
+            }
+          } catch (_) {}
+        }
+      } finally {
+        document?.dispose();
+      }
+    } catch (_) {}
+    return result;
   }
 }

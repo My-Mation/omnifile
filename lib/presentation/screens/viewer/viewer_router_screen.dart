@@ -6,8 +6,6 @@ import '../../../domain/entities/file_entity.dart';
 import '../../../domain/entities/viewer_type.dart';
 import '../../providers/detection_provider.dart';
 import '../../providers/recents_provider.dart';
-import '../../widgets/unsupported_screen.dart';
-import '../../widgets/viewer_shell.dart';
 import '../viewers/archive/archive_viewer.dart';
 import '../viewers/audio/audio_player_screen.dart';
 import '../viewers/hex/hex_viewer.dart';
@@ -146,13 +144,8 @@ class _ViewerRouterScreenState extends ConsumerState<ViewerRouterScreen> {
         return OfficeViewer(file: _currentFile);
 
       case ViewerType.hex:
-        return HexViewer(file: _currentFile);
-
       case ViewerType.unknown:
-        return ViewerShell(
-          file: _currentFile,
-          child: UnsupportedScreen(file: _currentFile),
-        );
+        return HexViewer(file: _currentFile);
     }
   }
 }

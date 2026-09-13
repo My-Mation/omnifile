@@ -12,6 +12,8 @@ import '../../../../domain/entities/file_entity.dart';
 import '../../../providers/detection_provider.dart';
 import '../../../providers/library_provider.dart';
 import '../../../providers/recents_provider.dart';
+import 'package:flutter/services.dart';
+import '../../../widgets/in_viewer_find_bar.dart';
 import '../../../widgets/o_banner.dart';
 import '../../../widgets/viewer_shell.dart';
 import '../../viewer/viewer_router_screen.dart';
@@ -19,6 +21,13 @@ import 'docx_xml_editor.dart';
 import 'xlsx_xml_editor.dart';
 
 enum _OfficeSubtype { docx, xlsx, pptx, legacy }
+
+class _OfficeSearchMatch {
+  final String location;
+  final String snippet;
+  final VoidCallback onJump;
+  const _OfficeSearchMatch({required this.location, required this.snippet, required this.onJump});
+}
 
 // ---------------------------------------------------------------------------
 // DATA MODELS
@@ -114,6 +123,12 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
 
   List<String> _legacyParagraphs = [];
 
+  // Search State
+  bool _isSearchActive = false;
+  final TextEditingController _searchController = TextEditingController();
+  List<_OfficeSearchMatch> _searchMatches = [];
+  int _currentSearchMatchIndex = -1;
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +139,7 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
   void dispose() {
     _slideController.dispose();
     _cellEditorController.dispose();
+    _searchController.dispose();
     for (final c in _docxControllers.values) {
       c.dispose();
     }
@@ -175,18 +191,27 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
         }
         var sheets = parsed.xlsxSheets;
         if (parsed.subtype == _OfficeSubtype.xlsx) {
-          try {
-            _xlsxXmlEditor = XlsxXmlEditor.fromBytes(bytes);
-            sheets = _xlsxXmlEditor!.sheets
-                .map((s) => _XlsxSheet(name: s.name, rows: s.grid, maxCols: s.colCount))
-                .toList();
+          if (ext == 'csv' || ext == 'tsv') {
+            sheets = parsed.xlsxSheets;
             _selectedRowIndex = 0;
             _selectedColIndex = 0;
             if (sheets.isNotEmpty && sheets[0].rows.isNotEmpty && sheets[0].rows[0].isNotEmpty) {
               _cellEditorController.text = sheets[0].rows[0][0];
             }
-          } catch (_) {
-            sheets = parsed.xlsxSheets;
+          } else {
+            try {
+              _xlsxXmlEditor = XlsxXmlEditor.fromBytes(bytes);
+              sheets = _xlsxXmlEditor!.sheets
+                  .map((s) => _XlsxSheet(name: s.name, rows: s.grid, maxCols: s.colCount))
+                  .toList();
+              _selectedRowIndex = 0;
+              _selectedColIndex = 0;
+              if (sheets.isNotEmpty && sheets[0].rows.isNotEmpty && sheets[0].rows[0].isNotEmpty) {
+                _cellEditorController.text = sheets[0].rows[0][0];
+              }
+            } catch (_) {
+              sheets = parsed.xlsxSheets;
+            }
           }
         }
         setState(() {
@@ -205,6 +230,217 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
           _isLoading = false;
           _errorMessage = 'Could not open document: $e';
         });
+      }
+    }
+  }
+
+  List<InlineSpan> _buildHighlightedSpans(
+    String text,
+    String query,
+    TextStyle normalStyle,
+    TextStyle highlightStyle,
+  ) {
+    if (query.trim().isEmpty || !text.toLowerCase().contains(query.toLowerCase())) {
+      return [TextSpan(text: text, style: normalStyle)];
+    }
+
+    final spans = <InlineSpan>[];
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    int start = 0;
+
+    while (true) {
+      final index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) {
+        if (start < text.length) {
+          spans.add(TextSpan(text: text.substring(start), style: normalStyle));
+        }
+        break;
+      }
+
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index), style: normalStyle));
+      }
+
+      spans.add(TextSpan(
+        text: text.substring(index, index + query.length),
+        style: highlightStyle,
+      ));
+
+      start = index + query.length;
+    }
+
+    return spans;
+  }
+
+  void _performSearch(String query) {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _searchMatches = [];
+        _currentSearchMatchIndex = -1;
+      });
+      return;
+    }
+
+    final lower = query.toLowerCase();
+    final matches = <_OfficeSearchMatch>[];
+
+    if (_detectedSubtype == _OfficeSubtype.docx) {
+      for (int i = 0; i < _docxElements.length; i++) {
+        final elem = _docxElements[i];
+        if (elem is DocxParagraphModel && elem.text.toLowerCase().contains(lower)) {
+          final text = elem.text;
+          final pos = text.toLowerCase().indexOf(lower);
+          final snippet = text.substring(math.max(0, pos - 15), math.min(text.length, pos + query.length + 20)).replaceAll('\n', ' ');
+          matches.add(_OfficeSearchMatch(
+            location: 'Paragraph ${i + 1}',
+            snippet: snippet,
+            onJump: () {
+              setState(() {
+                _activeParagraphIndex = i;
+              });
+            },
+          ));
+        } else if (elem is DocxTableModel) {
+          for (int r = 0; r < elem.rows.length; r++) {
+            for (int c = 0; c < elem.rows[r].length; c++) {
+              final cell = elem.rows[r][c];
+              if (cell.text.toLowerCase().contains(lower)) {
+                matches.add(_OfficeSearchMatch(
+                  location: 'Table (Row ${r + 1}, Col ${c + 1})',
+                  snippet: cell.text,
+                  onJump: () {
+                    _openDocxTableCellEditor(cell, context.colors);
+                  },
+                ));
+              }
+            }
+          }
+        }
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.xlsx) {
+      for (int sIdx = 0; sIdx < _xlsxSheets.length; sIdx++) {
+        final sheet = _xlsxSheets[sIdx];
+        for (int r = 0; r < sheet.rows.length; r++) {
+          for (int c = 0; c < sheet.rows[r].length; c++) {
+            final cellText = sheet.rows[r][c];
+            if (cellText.toLowerCase().contains(lower)) {
+              final colLetters = XlsxXmlEditor.indexToColLetters(c);
+              matches.add(_OfficeSearchMatch(
+                location: '${sheet.name} ($colLetters${r + 1})',
+                snippet: cellText,
+                onJump: () {
+                  setState(() {
+                    _selectedSheetIndex = sIdx;
+                    _selectedRowIndex = r;
+                    _selectedColIndex = c;
+                    _cellEditorController.text = cellText;
+                  });
+                },
+              ));
+            }
+          }
+        }
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.pptx) {
+      for (int sIdx = 0; sIdx < _pptxSlides.length; sIdx++) {
+        final slide = _pptxSlides[sIdx];
+        if (slide.title.toLowerCase().contains(lower)) {
+          matches.add(_OfficeSearchMatch(
+            location: 'Slide ${sIdx + 1} (Title)',
+            snippet: slide.title,
+            onJump: () {
+              setState(() => _currentSlideIndex = sIdx);
+              _slideController.jumpToPage(sIdx);
+            },
+          ));
+        }
+        for (final block in slide.textBlocks) {
+          if (block.toLowerCase().contains(lower)) {
+            matches.add(_OfficeSearchMatch(
+              location: 'Slide ${sIdx + 1}',
+              snippet: block,
+              onJump: () {
+                setState(() => _currentSlideIndex = sIdx);
+                _slideController.jumpToPage(sIdx);
+              },
+            ));
+          }
+        }
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.legacy) {
+      for (int i = 0; i < _legacyParagraphs.length; i++) {
+        final p = _legacyParagraphs[i];
+        if (p.toLowerCase().contains(lower)) {
+          matches.add(_OfficeSearchMatch(
+            location: 'Paragraph ${i + 1}',
+            snippet: p,
+            onJump: () {},
+          ));
+        }
+      }
+    }
+
+    setState(() {
+      _searchMatches = matches;
+      _currentSearchMatchIndex = matches.isNotEmpty ? 0 : -1;
+    });
+
+    if (matches.isNotEmpty) {
+      matches[0].onJump();
+    }
+  }
+
+  void _copyWholeOfficeContent() async {
+    final sb = StringBuffer();
+    if (_detectedSubtype == _OfficeSubtype.docx) {
+      for (final elem in _docxElements) {
+        if (elem is DocxParagraphModel) {
+          sb.writeln(elem.text);
+        } else if (elem is DocxTableModel) {
+          for (final row in elem.rows) {
+            sb.writeln(row.map((c) => c.text).join('\t'));
+          }
+          sb.writeln();
+        }
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.xlsx) {
+      if (_xlsxSheets.isNotEmpty) {
+        final currentSheet = _xlsxSheets[_selectedSheetIndex];
+        for (final row in currentSheet.rows) {
+          sb.writeln(row.join('\t'));
+        }
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.pptx) {
+      for (final slide in _pptxSlides) {
+        sb.writeln('[Slide ${slide.index}] ${slide.title}');
+        for (final block in slide.textBlocks) {
+          sb.writeln('• $block');
+        }
+        sb.writeln();
+      }
+    } else if (_detectedSubtype == _OfficeSubtype.legacy) {
+      for (final p in _legacyParagraphs) {
+        sb.writeln(p);
+      }
+    }
+
+    final allText = sb.toString().trim();
+    if (allText.isNotEmpty) {
+      await Clipboard.setData(ClipboardData(text: allText));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Copied document content (${allText.length} chars) to clipboard'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No text to copy')),
+        );
       }
     }
   }
@@ -262,6 +498,28 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
       }
     }
 
+    final customActions = <Widget>[
+      IconButton(
+        icon: const Icon(Icons.search),
+        tooltip: 'Search in document',
+        onPressed: () {
+          setState(() {
+            _isSearchActive = !_isSearchActive;
+            if (!_isSearchActive) {
+              _searchController.clear();
+              _searchMatches = [];
+              _currentSearchMatchIndex = -1;
+            }
+          });
+        },
+      ),
+      IconButton(
+        icon: const Icon(Icons.copy_all),
+        tooltip: 'Copy whole document',
+        onPressed: _copyWholeOfficeContent,
+      ),
+    ];
+
     final isDocx = _detectedSubtype == _OfficeSubtype.docx;
     final isXlsx = _detectedSubtype == _OfficeSubtype.xlsx;
     final isEditable = isDocx || isXlsx;
@@ -270,6 +528,7 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
 
     return ViewerShell(
       file: widget.file,
+      customActions: customActions,
       isEditable: isEditable,
       isEditing: isEditing,
       isDirty: isDirty,
@@ -291,7 +550,60 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
       noticeBanner: OBanner.notice(
         text: 'Document Preview — formatted offline.',
       ),
-      child: body,
+      child: Column(
+        children: [
+          if (_isSearchActive)
+            InViewerFindBar(
+              controller: _searchController,
+              matchCount: _searchMatches.length,
+              currentIndex: _currentSearchMatchIndex,
+              onNext: () {
+                if (_searchMatches.isNotEmpty) {
+                  final nextIdx = (_currentSearchMatchIndex + 1) % _searchMatches.length;
+                  setState(() => _currentSearchMatchIndex = nextIdx);
+                  _searchMatches[nextIdx].onJump();
+                }
+              },
+              onPrev: () {
+                if (_searchMatches.isNotEmpty) {
+                  final prevIdx =
+                      (_currentSearchMatchIndex - 1 + _searchMatches.length) % _searchMatches.length;
+                  setState(() => _currentSearchMatchIndex = prevIdx);
+                  _searchMatches[prevIdx].onJump();
+                }
+              },
+              onClose: () {
+                setState(() {
+                  _isSearchActive = false;
+                  _searchController.clear();
+                  _searchMatches = [];
+                  _currentSearchMatchIndex = -1;
+                });
+              },
+              onChanged: _performSearch,
+            ),
+          if (_isSearchActive && _searchMatches.isNotEmpty && _currentSearchMatchIndex >= 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: colors.surfaceElevated,
+              child: Row(
+                children: [
+                  Icon(Icons.find_in_page_outlined, size: 16, color: colors.accentPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Match ${_currentSearchMatchIndex + 1} of ${_searchMatches.length} (${_searchMatches[_currentSearchMatchIndex].location}): "${_searchMatches[_currentSearchMatchIndex].snippet}"',
+                      style: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(child: body),
+        ],
+      ),
     );
   }
 
@@ -307,8 +619,31 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
 
   Future<bool> _saveEditedXlsx() async {
     try {
-      if (_xlsxXmlEditor == null) return false;
-      final newBytes = _xlsxXmlEditor!.buildArchiveBytes();
+      final ext = widget.file.extension.toLowerCase();
+      Uint8List newBytes;
+      String targetExt;
+      if (ext == 'csv' || ext == 'tsv') {
+        targetExt = ext;
+        final separator = ext == 'tsv' ? '\t' : ',';
+        final sb = StringBuffer();
+        if (_xlsxSheets.isNotEmpty) {
+          final targetSheet = _xlsxSheets.length > _selectedSheetIndex ? _xlsxSheets[_selectedSheetIndex] : _xlsxSheets[0];
+          for (final row in targetSheet.rows) {
+            final formattedRow = row.map((cell) {
+              if (cell.contains(separator) || cell.contains('"') || cell.contains('\n')) {
+                return '"${cell.replaceAll('"', '""')}"';
+              }
+              return cell;
+            }).join(separator);
+            sb.writeln(formattedRow);
+          }
+        }
+        newBytes = Uint8List.fromList(utf8.encode(sb.toString()));
+      } else {
+        if (_xlsxXmlEditor == null) return false;
+        targetExt = 'xlsx';
+        newBytes = _xlsxXmlEditor!.buildArchiveBytes();
+      }
 
       final originalFile = File(widget.file.path);
       final parentDir = originalFile.parent.path;
@@ -317,11 +652,11 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
           ? originalName.substring(0, originalName.lastIndexOf('.'))
           : originalName;
 
-      String newFileName = '$nameWithoutExt (edited).xlsx';
+      String newFileName = '$nameWithoutExt (edited).$targetExt';
       String newFilePath = p.join(parentDir, newFileName);
       int counter = 2;
       while (await File(newFilePath).exists()) {
-        newFileName = '$nameWithoutExt (edited) ($counter).xlsx';
+        newFileName = '$nameWithoutExt (edited) ($counter).$targetExt';
         newFilePath = p.join(parentDir, newFileName);
         counter++;
       }
@@ -397,10 +732,16 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
       if (_docxXmlEditor == null) return false;
       final updatedXml = _docxXmlEditor!.buildXml();
 
-      final archive = ZipDecoder().decodeBytes(_rawFileBytes);
-      archive.add(ArchiveFile.string('word/document.xml', updatedXml));
+      final originalArchive = ZipDecoder().decodeBytes(_rawFileBytes);
+      final newArchive = Archive();
+      for (final f in originalArchive.files) {
+        if (f.name.toLowerCase() != 'word/document.xml' && !f.name.toLowerCase().endsWith('document.xml')) {
+          newArchive.addFile(f);
+        }
+      }
+      newArchive.addFile(ArchiveFile.string('word/document.xml', updatedXml));
 
-      final newBytes = Uint8List.fromList(ZipEncoder().encode(archive));
+      final newBytes = Uint8List.fromList(ZipEncoder().encode(newArchive));
 
       final originalFile = File(widget.file.path);
       final parentDir = originalFile.parent.path;
@@ -584,46 +925,65 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
             }
 
             // Normal preview item (tap to edit inline)
+            final searchQuery = _isSearchActive ? _searchController.text : '';
+            final hlStyle = TextStyle(
+              backgroundColor: colors.surfaceElevated,
+              color: colors.textPrimary,
+              fontWeight: FontWeight.bold,
+              decoration: TextDecoration.underline,
+            );
+
             Widget content;
             if (elem.isHeading) {
               final fontSize = elem.headingLevel == 1 ? 22.0 : (elem.headingLevel == 2 ? 18.0 : 16.0);
-              content = Text(
-                elem.text,
-                style: TextStyle(
-                  color: colors.accentPrimary,
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.bold,
-                  height: 1.3,
+              final baseStyle = TextStyle(
+                color: colors.accentPrimary,
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
+                height: 1.3,
+              );
+              content = RichText(
+                text: TextSpan(
+                  children: _buildHighlightedSpans(
+                    elem.text,
+                    searchQuery,
+                    baseStyle,
+                    hlStyle.copyWith(fontSize: fontSize, color: colors.accentPrimary),
+                  ),
                 ),
               );
             } else if (elem.isBullet) {
+              final baseStyle = TextStyle(
+                color: colors.textPrimary,
+                fontSize: 15,
+                height: 1.5,
+                fontWeight: elem.isBold ? FontWeight.bold : FontWeight.normal,
+                fontStyle: elem.isItalic ? FontStyle.italic : FontStyle.normal,
+              );
               content = Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('•  ', style: TextStyle(color: colors.accentPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
                   Expanded(
-                    child: Text(
-                      elem.text,
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 15,
-                        height: 1.5,
-                        fontWeight: elem.isBold ? FontWeight.bold : FontWeight.normal,
-                        fontStyle: elem.isItalic ? FontStyle.italic : FontStyle.normal,
+                    child: RichText(
+                      text: TextSpan(
+                        children: _buildHighlightedSpans(elem.text, searchQuery, baseStyle, hlStyle),
                       ),
                     ),
                   ),
                 ],
               );
             } else {
-              content = Text(
-                elem.text,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 15,
-                  height: 1.6,
-                  fontWeight: elem.isBold ? FontWeight.bold : FontWeight.normal,
-                  fontStyle: elem.isItalic ? FontStyle.italic : FontStyle.normal,
+              final baseStyle = TextStyle(
+                color: colors.textPrimary,
+                fontSize: 15,
+                height: 1.6,
+                fontWeight: elem.isBold ? FontWeight.bold : FontWeight.normal,
+                fontStyle: elem.isItalic ? FontStyle.italic : FontStyle.normal,
+              );
+              content = RichText(
+                text: TextSpan(
+                  children: _buildHighlightedSpans(elem.text, searchQuery, baseStyle, hlStyle),
                 ),
               );
             }
@@ -645,6 +1005,7 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
               ),
             );
           } else if (elem is DocxTableModel) {
+            final searchQuery = _isSearchActive ? _searchController.text.trim().toLowerCase() : '';
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: SingleChildScrollView(
@@ -656,18 +1017,29 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                     return TableRow(
                       decoration: BoxDecoration(color: colors.surfaceCard),
                       children: row.map((cell) {
+                        final isMatch = searchQuery.isNotEmpty && cell.text.toLowerCase().contains(searchQuery);
                         return InkWell(
                           onTap: () => _openDocxTableCellEditor(cell, colors),
                           child: Container(
                             constraints: const BoxConstraints(minWidth: 64, minHeight: 40),
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: isMatch
+                                ? BoxDecoration(
+                                    color: colors.surfaceElevated,
+                                    border: Border.all(color: colors.accentPrimary, width: 1.5),
+                                  )
+                                : null,
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Flexible(
                                   child: Text(
                                     cell.text.isNotEmpty ? cell.text : ' ',
-                                    style: TextStyle(color: colors.textPrimary, fontSize: 13),
+                                    style: TextStyle(
+                                      color: colors.textPrimary,
+                                      fontSize: 13,
+                                      fontWeight: isMatch ? FontWeight.bold : FontWeight.normal,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 6),
@@ -1038,6 +1410,8 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                               ...List.generate(currentSheet.maxCols, (colIdx) {
                                 final text = colIdx < rowData.length ? rowData[colIdx] : '';
                                 final isCellSelected = rowIdx == _selectedRowIndex && colIdx == _selectedColIndex;
+                                final searchQuery = _isSearchActive ? _searchController.text.trim().toLowerCase() : '';
+                                final isSearchMatch = searchQuery.isNotEmpty && text.toLowerCase().contains(searchQuery);
 
                                 return InkWell(
                                   onTap: () {
@@ -1053,10 +1427,14 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     alignment: Alignment.centerLeft,
                                     decoration: BoxDecoration(
-                                      color: isCellSelected ? colors.surfaceElevated : Colors.transparent,
+                                      color: isCellSelected
+                                          ? colors.surfaceElevated
+                                          : (isSearchMatch ? colors.surfaceElevated.withValues(alpha: 0.5) : Colors.transparent),
                                       border: Border.all(
-                                        color: isCellSelected ? colors.textPrimary : colors.divider,
-                                        width: isCellSelected ? 1.5 : 0.5,
+                                        color: isCellSelected
+                                            ? colors.textPrimary
+                                            : (isSearchMatch ? colors.accentPrimary : colors.divider),
+                                        width: (isCellSelected || isSearchMatch) ? 1.5 : 0.5,
                                       ),
                                     ),
                                     child: Text(
@@ -1066,7 +1444,7 @@ class _OfficeViewerState extends ConsumerState<OfficeViewer> {
                                       style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 12,
-                                        fontWeight: isCellSelected ? FontWeight.w600 : FontWeight.normal,
+                                        fontWeight: (isCellSelected || isSearchMatch) ? FontWeight.bold : FontWeight.normal,
                                       ),
                                     ),
                                   ),
@@ -1612,8 +1990,82 @@ Iterable<XmlElement> _findLocalElements(XmlNode node, String localName) {
   return node.descendantElements.where((e) => e.name.local.toLowerCase() == localName.toLowerCase());
 }
 
+_ParsedOfficeData _parseCsv(Uint8List bytes, {bool isTsv = false}) {
+  try {
+    String text;
+    try {
+      text = utf8.decode(bytes);
+    } catch (_) {
+      text = latin1.decode(bytes);
+    }
+    final separator = isTsv ? '\t' : (text.contains(';') && !text.contains(',') ? ';' : ',');
+    final lines = const LineSplitter().convert(text);
+    final rows = <List<String>>[];
+    int maxCols = 1;
+
+    for (final line in lines) {
+      if (line.isEmpty && rows.isEmpty) continue;
+      final row = <String>[];
+      final sb = StringBuffer();
+      bool insideQuote = false;
+
+      for (int i = 0; i < line.length; i++) {
+        final char = line[i];
+        if (char == '"') {
+          if (insideQuote && i + 1 < line.length && line[i + 1] == '"') {
+            sb.write('"');
+            i++;
+          } else {
+            insideQuote = !insideQuote;
+          }
+        } else if (char == separator && !insideQuote) {
+          row.add(sb.toString());
+          sb.clear();
+        } else {
+          sb.write(char);
+        }
+      }
+      row.add(sb.toString());
+      if (row.length > maxCols) maxCols = row.length;
+      rows.add(row);
+    }
+
+    if (rows.isEmpty) {
+      rows.add(['']);
+    }
+
+    for (int r = 0; r < rows.length; r++) {
+      while (rows[r].length < maxCols) {
+        rows[r].add('');
+      }
+    }
+
+    final sheet = _XlsxSheet(
+      name: isTsv ? 'TSV Data' : 'CSV Data',
+      rows: rows,
+      maxCols: maxCols,
+    );
+
+    return _ParsedOfficeData(
+      subtype: _OfficeSubtype.xlsx,
+      xlsxSheets: [sheet],
+    );
+  } catch (e) {
+    return _ParsedOfficeData(
+      subtype: _OfficeSubtype.legacy,
+      error: 'Failed to parse CSV spreadsheet: $e',
+    );
+  }
+}
+
 _ParsedOfficeData _parseOfficeBytes(Uint8List bytes, String extension) {
   try {
+    final ext = extension.toLowerCase();
+    // 0. CSV / TSV handling
+    if (ext == 'csv' || ext == 'tsv') {
+      return _parseCsv(bytes, isTsv: ext == 'tsv');
+    }
+
     // 1. OLE Compound File Header (.doc, .xls, .ppt)
     if (bytes.length >= 8 &&
         bytes[0] == 0xD0 &&
@@ -1645,7 +2097,6 @@ _ParsedOfficeData _parseOfficeBytes(Uint8List bytes, String extension) {
       normalizedArchive[norm] = f;
     }
 
-    final ext = extension.toLowerCase();
     if (ext == 'xlsx' || normalizedArchive.keys.any((k) => k.contains('xl/'))) {
       return _parseXlsx(normalizedArchive);
     } else if (ext == 'pptx' || normalizedArchive.keys.any((k) => k.contains('ppt/'))) {

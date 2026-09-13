@@ -35,18 +35,18 @@ OmniFile employs a purposeful black, white, and grayscale design language:
 
 | Category | Extensions | Key Features |
 | :--- | :--- | :--- |
-| **PDF Documents** | `.pdf` | Smooth vector rendering, pinch-to-zoom, page thumbnails, jump-to-page, password-protected PDF support, last-read page persistence, and cover-and-replace text editing. |
-| **Spreadsheets** | `.xlsx`, `.xls` | Native OpenXML spreadsheet parser and serializer, interactive 2D grid navigation, in-place cell editing, formula bar, row/column insertion and deletion, multi-row append, and multi-sheet tab switching. |
-| **Word Documents** | `.docx`, `.doc` | Native OpenXML document flow rendering, styled paragraph inspection, inline text editing, paragraph insertion, and structural preservation. |
-| **Presentations** | `.pptx`, `.ppt` | Slide deck slide-by-slide thumbnail navigation, formatted text frame extraction, slide title and bullet point editing. |
-| **Source Code & Scripts** | `.py`, `.js`, `.ts`, `.dart`, `.java`, `.kt`, `.c`, `.cpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sh`, `.sql`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.css`, `.html`, `.csv`, `.tsv`, `.log`, `.txt` | Over 180 syntax highlighting themes, 56dp line gutter with line numbering, active-line highlight, fast in-file search with match counters, case-sensitive/case-insensitive search, word wrap toggle, pinch-to-zoom font scaling, and multi-encoding switcher (UTF-8, UTF-16, Latin-1, ASCII). |
-| **Markdown** | `.md`, `.markdown` | Dual-mode viewer: seamless formatted Markdown rendering (headers, tables, code blocks, checklists) with a single-tap toggle to raw syntax-highlighted source code editing. |
-| **Raster & Vector Images** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.heic`, `.svg`, `.ico` | Interactive canvas with 0.5x to 8.0x pinch-to-zoom, double-tap zoom cycles, 90-degree lossless rotation, animated GIF playback controls, and complete EXIF metadata inspection. |
+| **PDF Documents** | `.pdf` | Smooth vector rendering, pinch-to-zoom, page thumbnails, jump-to-page, document-wide search with Up/Down navigation, copy current page text, scanned book page OCR, and cover-and-replace text editing. |
+| **Spreadsheets** | `.xlsx`, `.xls`, `.csv`, `.tsv` | Native OpenXML and CSV/TSV spreadsheet parser and serializer, interactive 2D grid navigation, in-place cell editing, formula bar, row/column insertion and deletion, multi-row append, and multi-sheet tab switching. |
+| **Word Documents** | `.docx`, `.doc` | Native OpenXML document flow rendering, styled paragraph and table cell inspection/editing, paragraph insertion, document search with highlight cycling, and structural preservation. |
+| **Presentations** | `.pptx`, `.ppt` | Slide deck slide-by-slide thumbnail navigation, formatted text frame extraction, slide title and bullet point editing, and slide search. |
+| **Source Code & Scripts** | `.py`, `.js`, `.ts`, `.dart`, `.java`, `.kt`, `.c`, `.cpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sh`, `.sql`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.css`, `.html`, `.log`, `.txt` | Over 180 syntax highlighting themes, 56dp line gutter with line numbering, active-line highlight, fast in-file search with match counters, Up/Down navigation, case-sensitive/case-insensitive search, word wrap toggle, pinch-to-zoom font scaling, copy whole file, and multi-encoding switcher (UTF-8, UTF-16, Latin-1, ASCII). |
+| **Markdown & Readme** | `.md`, `.markdown`, `README` | Dual-mode viewer: seamless formatted Markdown rendering (headers, tables, code blocks, checklists) with a single-tap toggle to raw syntax-highlighted source code editing. |
+| **Raster & Vector Images** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.heic`, `.svg`, `.ico` | Interactive canvas with 0.5x to 8.0x pinch-to-zoom, double-tap zoom cycles, 90-degree lossless rotation, animated GIF playback controls, automatic background OCR, in-image text search with Up/Down navigation, one-tap copy whole page, and complete EXIF metadata inspection. |
 | **Video Playback** | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.ts`, `.3gp`, `.flv`, `.wmv` | Hardware-accelerated playback powered by libmpv (`media_kit`), scrubber seekbar, jump forward/backward (+/- 10s), variable speed controls (0.25x to 4.0x), automatic sibling subtitle discovery (`.srt`, `.vtt`, `.ass`), and double-tap gestures. |
 | **Audio Playback** | `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`, `.m4a`, `.opus`, `.wma` | High-fidelity audio playback engine, dynamic scrubber, continuous playback, playback rate adjustments, track loop modes, ID3 tag metadata parsing, and embedded album art extraction. |
 | **Compressed Archives** | `.zip`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.7z`, `.rar` | Interactive breadcrumb folder explorer, inner archive file preview, isolate-based background extraction, and strict Zip-Slip directory traversal attack protection. |
 | **Web Documents** | `.html`, `.htm` | Sandboxed offline WebView with strict Content-Security-Policy (`default-src 'none'`) blocking external network egress, JavaScript execution toggle, and raw source inspection. |
-| **Binary Fallback** | Any unknown format | High-performance virtualized 3-column Hex Viewer (Offset, Hexadecimal, ASCII decoding) with 64KB chunk-based memory caching and jump-to-offset navigation. |
+| **Binary & Hex Files** | `.dat`, `.bin`, `.exe`, `.dll`, `.so`, `.dylib`, `.class`, `.o`, `.obj`, `.iso`, `.img`, `.rom`, `.elf`, `.wasm`, `.dex`, `.hex`, or unknown formats | High-performance virtualized 3-column Hex Viewer (Offset, Hexadecimal, ASCII decoding) with 64KB chunk-based memory caching, search, and jump-to-offset navigation. |
 
 ---
 
@@ -54,29 +54,36 @@ OmniFile employs a purposeful black, white, and grayscale design language:
 
 OmniFile goes beyond passive viewing by providing specialized, non-destructive editing workflows across multiple file formats:
 
-### 1. Excel Spreadsheet Editor (.xlsx)
+### 1. Excel & CSV Spreadsheet Editor (.xlsx, .xls, .csv, .tsv)
 - Live Cell Formula Bar: Displays the active cell coordinates (such as `[ B3 ]`), real-time content display, clear cell trigger, and an expanded multi-line cell entry dialog.
 - Structural Grid Modification: Insert rows before or after the selection, delete rows, insert columns, delete columns, and append rows in single or multi-row batches.
-- Native OpenXML Serialization: Direct parsing and serialization into ISO/IEC 29500-1 OpenXML format using standard inline strings (`t="inlineStr"`), maintaining complete compatibility with Microsoft Excel, LibreOffice Calc, and Google Sheets without breaking workbook relationships.
+- Native OpenXML and CSV/TSV Serialization: Direct parsing and serialization into ISO/IEC 29500-1 OpenXML format and comma/tab-separated values, maintaining complete compatibility with external spreadsheet tools while strictly preserving original files via the Golden Save Rule.
 
-### 2. Source Code and Text Editor
+### 2. Word Document Paragraph & Table Editor (.docx)
+- In-place editing of text paragraphs and table cells without breaking OpenXML `<w:tcPr>` properties or document formatting.
+- Multi-occurrence text search across all paragraphs and tables with match counters and navigation buttons.
+
+### 3. Source Code and Text Editor
 - Full in-place editing for plain text, configuration files, and over 30 programming languages.
-- Real-time Find and Replace engine with match counts, match navigation, and Replace All capability.
+- Real-time Find and Replace engine with match counts, match navigation (Next/Prev), and Replace All capability.
 - Line gutter numbering, custom tab sizes, dynamic word wrapping, and pinch-to-zoom font resizing.
 - Encoding conversion between UTF-8, UTF-16, Latin-1, and US-ASCII.
 
-### 3. PDF Non-Destructive Text Replacement
+### 4. PDF Non-Destructive Text Replacement
 - PDF text editor operating on a cover-and-replace overlay paradigm.
 - Tap any detected text block to overlay matching background containers with edited text rendered using best-match font estimation.
-- Serialized to a new PDF document without destroying underlying vector paths.
+- Multi-page text indexing and search with instant page jumping and match previews.
+- Copy current page text to clipboard with a single tap.
 
-### 4. Image Editing Studio
-- Crop Tool: Aspect ratio presets (Freeform, 1:1 Square, 4:3, 16:9, 9:16) with touch adjustment corners.
-- Transform Tools: 90-degree step rotation and horizontal/vertical flipping.
-- Tone and Filter Adjustments: Brightness, contrast, and monochrome/grayscale conversions.
-- Annotations: Text captions and watermark overlays with customizable grayscale palette choices.
+### 5. Image OCR, Interactive Text Editing & Studio
+- Automatic OCR: Background on-device text recognition on load without requiring manual button clicks.
+- On-Image Click-to-Edit: Tap any recognized text directly on the image to edit or replace it with matching font size and background cover.
+- Tap-to-Add Text: Tap any empty spot on the image to insert a new text block with custom styling and size.
+- Copy Whole Page: One-tap button to copy all recognized text on the image to the clipboard.
+- Search on Image: Search for text occurrences on the image with match counter and Up/Down cycling.
+- Transform & Crop Tools: Step rotation, horizontal/vertical flipping, and aspect ratio crop presets.
 
-### 5. Video Trimmer
+### 6. Video Trimmer
 - Frame-accurate start time and end time trimming.
 - Option to strip audio tracks for muted clip generation.
 - Asynchronous local transcoding with progress feedback.
@@ -87,8 +94,9 @@ OmniFile goes beyond passive viewing by providing specialized, non-destructive e
 
 OmniFile includes a 100% offline text recognition suite:
 
-- Image OCR: Powered by Google ML Kit on-device Latin text recognition models. Processes scanned receipts, documents, screenshots, and photos without sending a single byte off your device.
-- PDF Text Extraction: Pure Dart vector text extraction powered by Syncfusion PDF parsing, recovering text structures from digital PDF documents.
+- Automatic Image OCR: Powered by Google ML Kit on-device Latin text recognition models. Runs automatically on image load to identify all text blocks, lines, and bounding boxes.
+- Scanned Book PDF OCR: Native Android PDF renderer with memory-safe dimension clamping (prevents Out-Of-Memory crashes on high-res book scans) that rasterizes scanned pages and feeds them to ML Kit OCR.
+- PDF Vector Text Indexing: Pure Dart vector text extraction powered by Syncfusion PDF parsing, indexing all pages for rapid search and copy.
 - OCR Result Viewer: A dedicated modal sheet displaying recognized text, word and character counts, real-time in-result text searching with query highlighting, one-tap clipboard copy, and export to a standalone `.txt` document.
 
 ---

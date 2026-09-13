@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -521,6 +521,24 @@ class _TextCodeViewerState extends ConsumerState<TextCodeViewer> {
           },
         ),
       IconButton(
+        icon: const Icon(Icons.copy_all),
+        tooltip: 'Copy whole file',
+        onPressed: () async {
+          final content = _codeController.text;
+          if (content.isNotEmpty) {
+            await Clipboard.setData(ClipboardData(text: content));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Copied entire file (${content.length} chars) to clipboard'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          }
+        },
+      ),
+      IconButton(
         icon: const Icon(Icons.search),
         tooltip: 'Find in file',
         onPressed: () {
@@ -670,6 +688,25 @@ class _TextCodeViewerState extends ConsumerState<TextCodeViewer> {
                 );
               },
               onChanged: _performSearch,
+            ),
+          if (_isSearchActive && _matches.isNotEmpty && _currentMatchIndex >= 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: colors.surfaceElevated,
+              child: Row(
+                children: [
+                  Icon(Icons.find_in_page_outlined, size: 16, color: colors.accentPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Match ${_currentMatchIndex + 1} of ${_matches.length}',
+                      style: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ),
           Expanded(child: bodyContent),
         ],

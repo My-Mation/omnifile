@@ -50,21 +50,33 @@ class MainActivity : FlutterActivity() {
                         val cacheDir = applicationContext.cacheDir
                         for (idx in pagesToRender) {
                             val page = renderer.openPage(idx)
-                            val width = (page.width * dpiScale).toInt()
-                            val height = (page.height * dpiScale).toInt()
-                            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                            bitmap.eraseColor(Color.WHITE)
-                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            page.close()
-
-                            val outputFile = File(cacheDir, "pdf_page_${System.currentTimeMillis()}_$idx.jpg")
-                            val out = FileOutputStream(outputFile)
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
-                            out.flush()
-                            out.close()
-                            bitmap.recycle()
-
-                            outputPaths.add(outputFile.absolutePath)
+                            try {
+                                val maxDim = 2048f
+                                var wFloat = page.width * dpiScale
+                                var hFloat = page.height * dpiScale
+                                if (wFloat > maxDim || hFloat > maxDim) {
+                                    val factor = minOf(maxDim / wFloat, maxDim / hFloat)
+                                    wFloat *= factor
+                                    hFloat *= factor
+                                }
+                                val w = wFloat.toInt().coerceAtLeast(1)
+                                val h = hFloat.toInt().coerceAtLeast(1)
+                                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                try {
+                                    bitmap.eraseColor(Color.WHITE)
+                                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                    val outputFile = File(cacheDir, "pdf_page_${System.currentTimeMillis()}_$idx.jpg")
+                                    val out = FileOutputStream(outputFile)
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                                    out.flush()
+                                    out.close()
+                                    outputPaths.add(outputFile.absolutePath)
+                                } finally {
+                                    bitmap.recycle()
+                                }
+                            } finally {
+                                page.close()
+                            }
                         }
 
                         renderer.close()
@@ -73,9 +85,9 @@ class MainActivity : FlutterActivity() {
                         runOnUiThread {
                             result.success(outputPaths)
                         }
-                    } catch (e: Exception) {
+                    } catch (e: Throwable) {
                         runOnUiThread {
-                            result.error("RENDER_ERROR", e.localizedMessage, null)
+                            result.error("RENDER_ERROR", e.localizedMessage ?: e.toString(), null)
                         }
                     }
                 }.start()

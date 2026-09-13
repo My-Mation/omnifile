@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import '../../../core/services/ocr_service.dart';
@@ -11,6 +11,7 @@ import '../../../domain/entities/image_text_overlay_model.dart';
 import '../../providers/detection_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/recents_provider.dart';
+import '../../widgets/in_viewer_find_bar.dart';
 import '../../widgets/ocr_result_sheet.dart';
 import '../viewer/viewer_router_screen.dart';
 
@@ -23,10 +24,10 @@ class ImageEditorScreen extends ConsumerStatefulWidget {
   const ImageEditorScreen({
     super.key,
     required this.file,
-    this.startWithOcr = false,
+    this.startWithOcr = true,
   });
 
-  static void open(BuildContext context, FileEntity file, {bool startWithOcr = false}) {
+  static void open(BuildContext context, FileEntity file, {bool startWithOcr = true}) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => ImageEditorScreen(file: file, startWithOcr: startWithOcr)),
     );
@@ -44,7 +45,7 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
   Uint8List? _originalBytes;
   img.Image? _decodedImage;
 
-  _ImageEditorTab _activeTab = _ImageEditorTab.adjust;
+  _ImageEditorTab _activeTab = _ImageEditorTab.text;
 
   // Adjustments
   double _brightness = 0.0; // -1.0 to 1.0 (default 0.0)
@@ -69,10 +70,22 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
   bool _isOcrScanning = false;
   bool _tapToAddTextMode = false;
 
+  // Search State
+  bool _isSearchActive = false;
+  final TextEditingController _searchController = TextEditingController();
+  List<int> _searchMatchIndices = [];
+  int _currentSearchMatchIndex = -1;
+
   @override
   void initState() {
     super.initState();
     _loadImage();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadImage() async {
@@ -103,9 +116,8 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         _isLoading = false;
       });
 
-      if (widget.startWithOcr) {
-        _runImageOcr();
-      }
+      // Auto-run OCR on load so text on page is immediately recognized without needing button clicks
+      _runImageOcr();
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -352,6 +364,51 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         );
       }
     }
+  }
+
+  void _copyWholePageText() async {
+    if (_textBlocks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No text blocks detected on this image')),
+        );
+      }
+      return;
+    }
+    final allText = _textBlocks.map((b) => b.text).join('\n').trim();
+    await Clipboard.setData(ClipboardData(text: allText));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Copied all text on page (${_textBlocks.length} blocks, ${allText.length} chars) to clipboard'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _performSearch(String query) {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _searchMatchIndices = [];
+        _currentSearchMatchIndex = -1;
+      });
+      return;
+    }
+    final lower = query.toLowerCase();
+    final matches = <int>[];
+    for (int i = 0; i < _textBlocks.length; i++) {
+      if (_textBlocks[i].text.toLowerCase().contains(lower)) {
+        matches.add(i);
+      }
+    }
+    setState(() {
+      _searchMatchIndices = matches;
+      _currentSearchMatchIndex = matches.isNotEmpty ? 0 : -1;
+      if (matches.isNotEmpty) {
+        _selectedBlock = _textBlocks[matches[0]];
+      }
+    });
   }
 
   void _editTextBlockDialog(ImageTextBlock block) {
@@ -771,6 +828,25 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'Search text on page',
+            onPressed: () {
+              setState(() {
+                _isSearchActive = !_isSearchActive;
+                if (!_isSearchActive) {
+                  _searchController.clear();
+                  _searchMatchIndices = [];
+                  _currentSearchMatchIndex = -1;
+                }
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy_all),
+            tooltip: 'Copy whole page text',
+            onPressed: _copyWholePageText,
+          ),
+          IconButton(
             icon: _isOcrScanning
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.document_scanner_outlined),
@@ -796,6 +872,59 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
       ),
       body: Column(
         children: [
+          if (_isSearchActive)
+            InViewerFindBar(
+              controller: _searchController,
+              matchCount: _searchMatchIndices.length,
+              currentIndex: _currentSearchMatchIndex,
+              onNext: () {
+                if (_searchMatchIndices.isNotEmpty) {
+                  setState(() {
+                    _currentSearchMatchIndex =
+                        (_currentSearchMatchIndex + 1) % _searchMatchIndices.length;
+                    _selectedBlock = _textBlocks[_searchMatchIndices[_currentSearchMatchIndex]];
+                  });
+                }
+              },
+              onPrev: () {
+                if (_searchMatchIndices.isNotEmpty) {
+                  setState(() {
+                    _currentSearchMatchIndex =
+                        (_currentSearchMatchIndex - 1 + _searchMatchIndices.length) %
+                            _searchMatchIndices.length;
+                    _selectedBlock = _textBlocks[_searchMatchIndices[_currentSearchMatchIndex]];
+                  });
+                }
+              },
+              onClose: () {
+                setState(() {
+                  _isSearchActive = false;
+                  _searchController.clear();
+                  _searchMatchIndices = [];
+                  _currentSearchMatchIndex = -1;
+                });
+              },
+              onChanged: _performSearch,
+            ),
+          if (_isSearchActive && _searchMatchIndices.isNotEmpty && _currentSearchMatchIndex >= 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: colors.surfaceElevated,
+              child: Row(
+                children: [
+                  Icon(Icons.find_in_page_outlined, size: 16, color: colors.accentPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Match ${_currentSearchMatchIndex + 1} of ${_searchMatchIndices.length}: "${_textBlocks[_searchMatchIndices[_currentSearchMatchIndex]].text}"',
+                      style: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Live Preview Canvas
           Expanded(
             child: Center(
@@ -881,11 +1010,27 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
 
                                 // Interactive Text Blocks (OCR & Manual)
                                 if (_cropAspectRatio == null)
-                                  ..._textBlocks.map((block) {
+                                  ..._textBlocks.asMap().entries.map((entry) {
+                                    final idx = entry.key;
+                                    final block = entry.value;
                                     final screenLeft = block.rect.left * scaleX;
                                     final screenTop = block.rect.top * scaleY;
                                     final screenWidth = math.max(block.rect.width * scaleX, 24.0);
                                     final isSelected = _selectedBlock?.id == block.id;
+                                    final isSearchMatch = _searchMatchIndices.contains(idx);
+                                    final isActiveSearchMatch = _searchMatchIndices.isNotEmpty &&
+                                        _currentSearchMatchIndex >= 0 &&
+                                        _searchMatchIndices[_currentSearchMatchIndex] == idx;
+
+                                    Color borderColor = isSelected ? Colors.white : Colors.grey.withValues(alpha: 0.8);
+                                    double borderWidth = isSelected ? 1.5 : 1.0;
+                                    if (isActiveSearchMatch) {
+                                      borderColor = Colors.white;
+                                      borderWidth = 2.5;
+                                    } else if (isSearchMatch) {
+                                      borderColor = Colors.white70;
+                                      borderWidth = 1.8;
+                                    }
 
                                     return Positioned(
                                       left: screenLeft,
@@ -900,18 +1045,20 @@ class _ImageEditorScreenState extends ConsumerState<ImageEditorScreen> {
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 2),
                                           decoration: BoxDecoration(
-                                            color: block.isCoverOriginal ? block.backgroundColor : Colors.transparent,
+                                            color: isActiveSearchMatch
+                                                ? Colors.black
+                                                : (block.isCoverOriginal ? block.backgroundColor : Colors.transparent),
                                             border: Border.all(
-                                              color: isSelected ? Colors.white : Colors.grey.withValues(alpha: 0.8),
-                                              width: isSelected ? 1.5 : 1.0,
+                                              color: borderColor,
+                                              width: borderWidth,
                                             ),
                                           ),
                                           child: Text(
                                             block.text,
                                             style: TextStyle(
-                                              color: block.textColor,
+                                              color: isActiveSearchMatch ? Colors.white : block.textColor,
                                               fontSize: (block.fontSize * scaleY).clamp(8.0, 72.0),
-                                              fontWeight: FontWeight.w600,
+                                              fontWeight: (isActiveSearchMatch || isSelected) ? FontWeight.bold : FontWeight.w600,
                                               height: 1.1,
                                             ),
                                           ),
